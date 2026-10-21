@@ -1,0 +1,21 @@
+/* Ghost on the Circuit: its post-mortem plot (shared/style.css has the rest). */
+.key .ln.load { border-top: 2px solid #9aa3b2; }
+.key .ln.fit { border-top: 2px solid var(--accent); }
+.key .sw { display: inline-block; width: 16px; height: 10px; }
+.key .sw.gc-est { height: 6px; }
+.key .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
+.key .gc-true { border: 1.4px solid #4b5568; background: #eef1f6; }
+.key .gc-est.ok { background: var(--ok); }
+.key .gc-on { background: #fde9b8; }
+.key .gc-y { background: var(--ink); }
+.pm-tools { display: flex; align-items: center; gap: 14px; }
+.pm-plot-wrap.tall { max-height: 560px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 8px; }
+.gc-true { fill: #eef1f6; stroke: #4b5568; stroke-width: 1.2; }
+.gc-est { fill: var(--accent); }
+.gc-est.ok { fill: var(--ok); }
+.gc-est.bad { fill: var(--bad); }
+.gc-on { fill: #fde9b8; opacity: .6; }
+.gc-load { fill: none; stroke: #9aa3b2; stroke-width: 2; }
+.gc-fit { fill: none; stroke: var(--accent); stroke-width: 2; }
+.gc-y { fill: var(--ink); }

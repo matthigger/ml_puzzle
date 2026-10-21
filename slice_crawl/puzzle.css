@@ -1,0 +1,12 @@
+/* Slice Crawl: its post-mortem plot (shared/style.css has the rest). */
+.ov { text-decoration: overline; }
+.pm-curve { fill: #dbe4f3; fill-opacity: .55; stroke: #7d8fb3;
+  stroke-width: 1.2; }
+.pm-avg { stroke: var(--accent); stroke-width: 2; }
+.pm-slice { fill: #fbbf24; stroke: #b45309; stroke-width: .8;
+  stroke-linejoin: round; }
+.pm-slice:hover { fill: #f59e0b; }
+.pm-pep { fill: #dc2626; pointer-events: none; }
+.key .ln.avg { border-top: 2px solid var(--accent); }
+.key .ln.curve { height: 10px; border: 1.2px solid #7d8fb3;
+  border-bottom: 0; border-radius: 10px 10px 0 0; background: #e6ecf7; }

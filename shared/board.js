@@ -1,9 +1,10 @@
 // Board: the class leaderboard, stored in Supabase (see supabase/schema.sql),
-// a database shared by every puzzle: this page's entries are CONFIG.project.
-// The page calls three database functions over plain fetch, with the
-// project's publishable key (safe to publish: it can only call those).
+// a database shared by every puzzle: this page's entries are those of
+// PUZZLE.project (the puzzle's js/puzzle.js). The page calls three database
+// functions over plain fetch, with the publishable key (safe to publish: it
+// can only call those).
 //
-//   Board.enabled            false until js/config.js has a project
+//   Board.enabled            false until shared/config.js has the keys
 //   Board.list(code)         -> {title, open, entries}, entries best first
 //   Board.post(entry)        add or replace this browser's entry (entry.code
 //                            names the board)
@@ -15,7 +16,7 @@
 
 const Board = (function () {
   const enabled = !!(CONFIG.supabaseUrl && CONFIG.supabaseKey);
-  const TOKEN_KEY = "where_start.token";
+  const TOKEN_KEY = PUZZLE.project + ".token";
 
   function token() {
     let t = null;
@@ -44,13 +45,11 @@ const Board = (function () {
     return data;
   }
 
-  const project = CONFIG.project;
+  const project = PUZZLE.project;
   // every board has its own code, needed to see it and to post to it
   const list = code => rpc("leaderboard", { project, code, token: token() });
   const remove = code => rpc("delete_entry", { project, code, token: token() });
   const post = e => rpc("post_entry", { ...e, project, token: token() });
-
-  const pct = v => (100 * v).toFixed(1) + "%";
 
   // entries arrive re-run scores first (best first), then the ones still
   // waiting; a failed re-run comes back only to its owner, with the reason
@@ -66,7 +65,8 @@ const Board = (function () {
         tr.className = "gap";
         const td = tr.insertCell();
         td.colSpan = 8;
-        td.textContent = sec === "below" ? "Not at 90% yet" : "Waiting for re-run";
+        td.textContent = sec === "below" ? `Not at ${PUZZLE.bar} yet`
+                                         : "Waiting for re-run";
       }
       section = sec;
       const tr = tbody.insertRow();
@@ -81,10 +81,7 @@ const Board = (function () {
       add(e.name + (e.mine ? " (you)" : ""));
       add(e.method);
       if (done) {
-        add(pct(m.hit_rate), "num");
-        add(m.mean_km.toFixed(2), "num");
-        add(m.median_km.toFixed(2), "num");
-        add(m.p90_km.toFixed(2), "num");
+        for (const v of PUZZLE.scores(m)) add(v, "num");
       } else {
         const td = add(e.status === "failed"
           ? "Your re-run failed: " + (e.error || "").trim().split("\n").pop()

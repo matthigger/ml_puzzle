@@ -8,9 +8,12 @@
     Start puzzle: run your estimate() on as many random earthquakes as you
     like, see how close it gets to each epicenter.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23b45309' stroke-width='2' stroke-opacity='.45'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%23b45309' stroke-width='2' stroke-opacity='.7'/%3E%3Cpath d='M16 10 L17.8 14.2 L22 14.4 L18.7 17.2 L19.8 21.5 L16 19.1 L12.2 21.5 L13.3 17.2 L10 14.4 L14.2 14.2 Z' fill='%23dc2626'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="../shared/style.css">
+  <link rel="stylesheet" href="puzzle.css">
 </head>
-<body>
+<body data-puzzle="where_start">
+  <script src="../shared/config.js"></script>
+  <script src="../shared/nav.js"></script>
   <header>
     <h1>Where Did It Start?</h1>
     <p class="sub">Practice site for the puzzle: try your
@@ -256,16 +259,17 @@ estimate = Locator(n_start=8).estimate</pre></li>
   </dialog>
 
   <footer>
-    <a href="https://github.com/matthigger/where_start">Source on GitHub</a>
+    <a href="https://github.com/matthigger/ml_puzzle/tree/main/where_start">Source on
+      GitHub</a>
     &middot;
     <span id="build"></span>
   </footer>
 
-  <script src="js/version.js"></script>
-  <script src="js/config.js"></script>
-  <script src="js/py.js"></script>
+  <script src="../shared/version.js"></script>
+  <script src="js/puzzle.js"></script>
+  <script src="../shared/py.js"></script>
   <script src="js/postmortem.js"></script>
-  <script src="js/board.js"></script>
+  <script src="../shared/board.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

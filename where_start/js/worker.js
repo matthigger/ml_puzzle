@@ -7,7 +7,7 @@
 //               { id, error }, { id, progress: [done, n, hits, total_km] },
 //               { ready: true } once Python is up, { fatal } if it failed.
 
-// a module worker (see js/py.js): pyodide.mjs is the supported way in
+// a module worker (see shared/py.js): pyodide.mjs is the supported way in
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs";
 
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";

@@ -9,9 +9,12 @@
     like, see how often it names the right devices and how many watts it
     is off.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M18 2 L6 18 H15 L13 30 L26 12 H17 Z' fill='%23fbbf24' stroke='%23b45309' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="../shared/style.css">
+  <link rel="stylesheet" href="puzzle.css">
 </head>
-<body>
+<body data-puzzle="ghost_circuit">
+  <script src="../shared/config.js"></script>
+  <script src="../shared/nav.js"></script>
   <header>
     <h1>Ghost on the Circuit</h1>
     <p class="sub">Practice site for the puzzle: try your
@@ -264,16 +267,17 @@ estimate = Fitter(n_top=6).estimate</pre></li>
   </dialog>
 
   <footer>
-    <a href="https://github.com/matthigger/ghost_circuit">Source on GitHub</a>
+    <a href="https://github.com/matthigger/ml_puzzle/tree/main/ghost_circuit">Source on
+      GitHub</a>
     &middot;
     <span id="build"></span>
   </footer>
 
-  <script src="js/version.js"></script>
-  <script src="js/config.js"></script>
-  <script src="js/py.js"></script>
+  <script src="../shared/version.js"></script>
+  <script src="js/puzzle.js"></script>
+  <script src="../shared/py.js"></script>
   <script src="js/postmortem.js"></script>
-  <script src="js/board.js"></script>
+  <script src="../shared/board.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

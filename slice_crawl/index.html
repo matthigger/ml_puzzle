@@ -8,9 +8,12 @@
     puzzle: run your estimate() on as many random pizza crawls as you like,
     see how often it names the best shop and how many slices it tastes.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 29 L4 6 Q16 1 28 6 Z' fill='%23fbbf24' stroke='%23b45309' stroke-width='2' stroke-linejoin='round'/%3E%3Ccircle cx='13' cy='10' r='2.6' fill='%23dc2626'/%3E%3Ccircle cx='20' cy='13' r='2.6' fill='%23dc2626'/%3E%3Ccircle cx='15.5' cy='19' r='2.4' fill='%23dc2626'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="../shared/style.css">
+  <link rel="stylesheet" href="puzzle.css">
 </head>
-<body>
+<body data-puzzle="slice_crawl">
+  <script src="../shared/config.js"></script>
+  <script src="../shared/nav.js"></script>
   <header>
     <h1>Slice Crawl</h1>
     <p class="sub">Practice site for the puzzle: try your
@@ -253,16 +256,17 @@ estimate = Racer(z=2.5).estimate</pre></li>
   </dialog>
 
   <footer>
-    <a href="https://github.com/matthigger/slice_crawl">Source on GitHub</a>
+    <a href="https://github.com/matthigger/ml_puzzle/tree/main/slice_crawl">Source on
+      GitHub</a>
     &middot;
     <span id="build"></span>
   </footer>
 
-  <script src="js/version.js"></script>
-  <script src="js/config.js"></script>
-  <script src="js/py.js"></script>
+  <script src="../shared/version.js"></script>
+  <script src="js/puzzle.js"></script>
+  <script src="../shared/py.js"></script>
   <script src="js/postmortem.js"></script>
-  <script src="js/board.js"></script>
+  <script src="../shared/board.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

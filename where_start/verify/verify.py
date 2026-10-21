@@ -3,9 +3,9 @@
 The page posts code, never a score. This script takes each where_start
 entry still waiting, runs its estimator on N_QUAKE quakes of the official
 setup with a seed drawn here (and never shown), and writes back the score
-the board displays. The database is shared by every puzzle (see the
-slice_crawl repo's supabase/schema.sql); a puzzle's re-run script handles
-its own PROJECT and scores it its own way (score()).
+the board displays. The database is shared by every puzzle (see
+../supabase/schema.sql); a puzzle's re-run script handles its own
+PROJECT and scores it its own way (score()).
 
 The student's code runs in a container with no network, a read-only disk,
 no secrets and limited memory / time (child.py). The quakes stay out here:
@@ -16,7 +16,7 @@ epicenter, origin time or clock errors.
     python3 verify/verify.py --local my_code.py   try one file, no database
     python3 verify/verify.py --count              how many are waiting
 
-Needs the image (from the repo root):
+Needs the image (from this puzzle's folder):
 
     docker build -f verify/Dockerfile -t where-start-verify .
 

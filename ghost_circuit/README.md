@@ -1,4 +1,6 @@
-# ghost_circuit
+# Ghost on the Circuit
+
+A tab of [ML Puzzles](../README.md): `ghost_circuit/` on the site.
 
 Practice site for the DS4400 **Ghost on the Circuit** puzzle
 (`DS4400/problem_repo/puzz/puzz_ghost_circuit`), built on the same frame as
@@ -55,66 +57,38 @@ puzzle notebook ships one fixed circuit as `meter.csv` / `devices.csv`);
 student's code, lists its estimators, runs them, replays one circuit and
 builds the results CSV; it imports outside the browser too.
 
-## Leaderboard
+## Leaderboard re-run
 
-Shares slice_crawl's Supabase database (`../slice_crawl/supabase/schema.sql`
-and its README). Once, in the SQL editor:
-
-```sql
-insert into private.projects (id, title)
-values ('ghost_circuit', 'Ghost on the Circuit') on conflict (id) do nothing;
-select private.new_board('ghost_circuit', 'DS4400 Fall 2026');
-```
-
-`new_board` prints the board's code: give it to the class, keep it out of
-this repo. `js/config.js` already holds the shared URL and publishable key.
-
-`verify/verify.py` re-runs each waiting entry on 2000 circuits with a 63-bit
-secret seed, in a Docker container (`verify/Dockerfile`: no network,
+`verify/verify.py` re-runs each waiting entry on 2000 circuits with a secret
+63-bit seed, in a Docker container (`verify/Dockerfile`: no network,
 read-only disk, 1 GB / 1 CPU, 30 minutes). The container gets each
 circuit's `x` and `y` only (`verify/child.py`), never its watts, and every
-reply is untrusted (bounded line, 150 finite numbers). `verify.yml` runs it
-every 10 minutes once the repo has secrets `SUPABASE_URL` and
-`SUPABASE_SECRET_KEY`.
+reply is untrusted (bounded line, 150 finite numbers). Board: project
+`ghost_circuit`, ranked when at least 95% right, by fewest average watts
+off.
+
+Try it on one file, no database (from this folder):
 
 ```sh
 docker build -f verify/Dockerfile -t ghost-circuit-verify .
 python3 verify/verify.py --local my_code.py --helper helpers.py
 ```
 
-## Run locally
-
-```sh
-python3 -m http.server 8000   # then visit http://localhost:8000
-```
-
-## Publish on GitHub Pages
-
-```sh
-gh repo create matthigger/ghost_circuit --public --source . --push
-gh api -X POST repos/matthigger/ghost_circuit/pages -f build_type=workflow
-```
-
-The site then lives at <https://matthigger.github.io/ghost_circuit/>. Pages
-shares an origin with the other puzzle sites, so localStorage keys here
-start with `ghost_circuit.`.
-
 ## Layout
 
 | file | role |
 |------|------|
 | `index.html` | page, help text, controls |
-| `style.css` | layout, tables, plot styles (slice_crawl's look) |
+| `puzzle.css` | its post-mortem plot styles |
+| `js/puzzle.js` | its project id, bar and board columns |
 | `js/app.js` | editor and files, runs table, post-mortem flow, CSV, posting, tabs |
-| `js/py.js` | the page's handle on the Python worker |
 | `js/worker.js` | module web worker: Pyodide, runs `py/runner.py` |
 | `js/postmortem.js` | a run's circuits table, one circuit's plot |
-| `js/board.js` | leaderboard calls (Supabase RPC) and table |
-| `js/config.js` | Supabase URL, publishable key, project id |
-| `js/version.js` | build stamp, overwritten at deploy |
 | `py/runner.py` | load / run / replay / results for the student's code |
 | `py/ghost_circuit.py` | circuit generator, scoring, `evaluate()` |
 | `verify/verify.py` | re-run waiting entries, write back their scores |
 | `verify/child.py` | the student's side of a re-run, in the container |
 | `verify/Dockerfile` | the re-run container |
-| `.github/workflows/` | Pages deploy; scheduled re-run |
+
+Shared with the other puzzles: `../shared/` (styles, Python worker handle,
+leaderboard, config, site bar) and `../supabase/schema.sql`.

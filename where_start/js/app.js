@@ -1,6 +1,6 @@
 // The page: your code (typed, or dropped files), runs (each keeps its code;
 // click one for its post-mortem, code and results CSV), leaderboard
-// posting, tabs. Python work goes through Py (js/py.js).
+// posting, tabs. Python work goes through Py (shared/py.js).
 
 (function () {
   const $ = id => document.getElementById(id);
@@ -1127,7 +1127,7 @@ def estimate(stations, arrivals):
 
   // footer build stamp: the deployed commit (linked) and build time
   const build = $("build");
-  const repo = "https://github.com/matthigger/where_start";
+  const repo = CONFIG.repo;
   if (typeof BUILD === "undefined" || !BUILD) {
     build.textContent = "local copy";
   } else {

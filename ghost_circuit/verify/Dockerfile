@@ -1,4 +1,4 @@
-# The re-run container (see verify.py). Build from the repo root:
+# The re-run container (see verify.py). Build from this puzzle's folder:
 #   docker build -f verify/Dockerfile -t ghost-circuit-verify .
 FROM python:3.14-slim
 RUN pip install --no-cache-dir numpy scipy pandas scikit-learn matplotlib

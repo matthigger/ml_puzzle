@@ -1,4 +1,5 @@
-/* Same look as the "X, visually" demos (cross validation, knn, ...). */
+/* Every puzzle's look (the same as the "X, visually" demos); a puzzle's
+   own plot styles are in its puzzle.css. */
 :root {
   --ink: #1c2230;
   --muted: #5d6677;
@@ -441,7 +442,7 @@ button.chip.file.on { background: var(--ink); color: #fff;
   pointer-events: none;
 }
 .tip i { font-family: Georgia, "Times New Roman", serif; font-size: 1.06em; }
-.runs th i { text-transform: none; letter-spacing: 0; }
+.runs th i, .runs th .unit { text-transform: none; letter-spacing: 0; }
 .pm-badge.muted { fill: #eef0f4; }
 .pm-badge-text.muted { fill: var(--muted); }
 .pm-bar { display: flex; align-items: center; justify-content: space-between;
@@ -449,7 +450,6 @@ button.chip.file.on { background: var(--ink); color: #fff;
 .pm-bar .hint { margin: 0 !important; }
 .pm-bar .buttons { margin: 0; align-items: center; }
 .pm-bar + .pm-table-wrap { margin-top: 6px; }
-.ov { text-decoration: overline; }
 .runs th button.sort i, .key i:not(.ln) { font-family: Georgia,
   "Times New Roman", serif; font-size: 1.08em; text-transform: none; }
 .check { display: inline-flex; align-items: center; gap: 6px;
@@ -469,16 +469,9 @@ button.chip.file.on { background: var(--ink); color: #fff;
 .pm-row.alt { fill: #fafbfc; }
 .pm-row.picked.ok { fill: #effcf3; }
 .pm-row.picked.bad { fill: #fef4f4; }
-.pm-curve { fill: #dbe4f3; fill-opacity: .55; stroke: #7d8fb3;
-  stroke-width: 1.2; }
 .pm-mean { stroke: var(--ink); stroke-width: 1.2; stroke-dasharray: 4 3;
   stroke-opacity: .65; }
 .pm-base { stroke: #c9ced8; stroke-width: 1; }
-.pm-avg { stroke: var(--accent); stroke-width: 2; }
-.pm-slice { fill: #fbbf24; stroke: #b45309; stroke-width: .8;
-  stroke-linejoin: round; }
-.pm-slice:hover { fill: #f59e0b; }
-.pm-pep { fill: #dc2626; pointer-events: none; }
 .pm-shop { font-size: 13px; font-weight: 700; fill: var(--ink); }
 .pm-note { font-size: 11.5px; fill: var(--muted); }
 .pm-note.truth { font-style: italic; }
@@ -499,10 +492,7 @@ button.chip.file.on { background: var(--ink); color: #fff;
 }
 .key > span { display: inline-flex; align-items: center; gap: 6px; }
 .key .ln { display: inline-block; width: 22px; height: 0; }
-.key .ln.avg { border-top: 2px solid var(--accent); }
 .key .ln.mean { border-top: 1.5px dashed var(--ink); opacity: .7; }
-.key .ln.curve { height: 10px; border: 1.2px solid #7d8fb3;
-  border-bottom: 0; border-radius: 10px 10px 0 0; background: #e6ecf7; }
 
 /* ----------------------------------------------------- runs + dialog */
 .name-edit {
@@ -546,6 +536,19 @@ footer {
 }
 footer a { color: inherit; }
 
+/* ---------------------------------------------- site bar (shared/nav.js) */
+.site-bar { background: var(--ink); }
+.site-inner { max-width: 1360px; margin: 0 auto; padding: 0 24px;
+  display: flex; align-items: stretch; gap: 4px; overflow-x: auto;
+  white-space: nowrap; scrollbar-width: none; }
+.site-bar a { color: #c3cad6; text-decoration: none; padding: 11px 12px 9px;
+  border-bottom: 3px solid transparent; font-size: .95rem; }
+.site-bar a:hover { color: #fff; }
+.site-bar a[aria-current="page"] { color: #fff; font-weight: 600;
+  border-bottom-color: #fbbf24; }
+.site-bar .brand { color: #fff; font-weight: 700; padding-left: 0;
+  margin-right: 12px; letter-spacing: .01em; }
+
 @media (max-width: 1360px) {
   .intro { margin-left: 24px; margin-right: 24px; }
 }
@@ -554,6 +557,7 @@ footer a { color: inherit; }
 }
 @media (max-width: 520px) {
   header, main, footer { padding-left: 16px; padding-right: 16px; }
+  .site-inner { padding: 0 16px; }
   .intro { margin-left: 16px; margin-right: 16px; }
   .field { grid-template-columns: 1fr; }
 }

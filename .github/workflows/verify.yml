@@ -1,6 +1,7 @@
-# Re-run waiting leaderboard entries (verify/verify.py) every 10 minutes.
-# Needs repo secrets SUPABASE_URL and SUPABASE_SECRET_KEY; without them it
-# does nothing. The students' code runs in a container that sees neither.
+# Re-run waiting leaderboard entries every 10 minutes: one job per puzzle,
+# each with its own verify/verify.py and container. Needs repo secrets
+# SUPABASE_URL and SUPABASE_SECRET_KEY; without them it does nothing. The
+# students' code runs in a container that sees neither.
 name: Re-run leaderboard entries
 
 on:
@@ -11,14 +12,21 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: verify
-  cancel-in-progress: false
-
 jobs:
   rerun:
+    strategy:
+      fail-fast: false
+      matrix:
+        puzzle: [slice_crawl, where_start, ghost_circuit]
+    # one run per puzzle at a time; verify.py keeps inside this timeout
+    concurrency:
+      group: verify-${{ matrix.puzzle }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: ${{ matrix.puzzle }}
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
@@ -27,8 +35,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      # the host side builds the circuits
-      - run: pip install numpy
+      # the host side builds the instances with numpy, outside the container
+      - run: pip install --quiet numpy
       - id: waiting
         name: Count waiting entries
         run: |
@@ -40,7 +48,9 @@ jobs:
           fi
       - name: Build the re-run container
         if: steps.waiting.outputs.n != '0'
-        run: docker build -q -f verify/Dockerfile -t ghost-circuit-verify .
+        run: |
+          docker build -q -f verify/Dockerfile \
+            -t "$(echo '${{ matrix.puzzle }}' | tr _ -)-verify" .
       - name: Re-run
         if: steps.waiting.outputs.n != '0'
         run: python3 verify/verify.py

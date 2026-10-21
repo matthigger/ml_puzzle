@@ -1,4 +1,6 @@
-# slice_crawl
+# Slice Crawl
+
+A tab of [ML Puzzles](../README.md): `slice_crawl/` on the site.
 
 Practice site for the DS4400 **Slice Crawl** puzzle. Students either type
 their code in the page ("Type it here") or drop the `.py` / `.ipynb` files
@@ -51,106 +53,37 @@ cp ~/Dropbox/teach/DS4400/problem_repo/puzz/puzz_slice_crawl/slice_crawl.py py/
 estimators, run them (same crawls as `evaluate()` for a given seed), replay
 one crawl. Test it outside the browser with plain Python by importing it.
 
-## Leaderboard setup (once)
+## Leaderboard re-run
 
-The page posts code, never a score. `verify/verify.py` re-runs each waiting
-entry on 5000 crawls of the official setup with a seed drawn there and
-never shown, and writes back the score the board displays. The student's
-code runs in a Docker container (`verify/Dockerfile`) with no network, a
-read-only disk, no secrets, 1 GB / 1 CPU and a 15 minute limit; the crawls
-stay outside it and answer one taste at a time (`verify/child.py`), so the
-hidden truth is out of reach. A GitHub Action (`verify.yml`) runs it every
-10 minutes.
+`verify/verify.py` re-runs each waiting entry on 5000 crawls of the official
+setup with a secret 63-bit seed, in a Docker container (`verify/Dockerfile`:
+no network, read-only disk, no secrets, 1 GB / 1 CPU, 15 minutes). The
+crawls stay outside it and answer one taste at a time (`verify/child.py`),
+so the hidden truth is out of reach. Board: project `slice_crawl`, ranked
+when at least 95% right, by fewest average slices.
 
-1. Create a free [Supabase](https://supabase.com) project (one serves
-   every puzzle site of this kind). In the SQL editor, run
-   `supabase/schema.sql`.
-2. Add the project once, then a **board** per class (a term or section).
-   Each board has its own code, which students need to see it and to post
-   to it; `new_board` makes one and prints it (keep it out of this repo,
-   put it in the assignment):
-
-   ```sql
-   insert into private.projects (id, title) values ('slice_crawl', 'Slice Crawl')
-   on conflict (id) do nothing;
-   select private.new_board('slice_crawl', 'DS4400 Fall 2026');
-   ```
-
-3. Put the project URL and its **publishable** key (Project Settings, API
-   Keys; `sb_publishable_...`) in `js/config.js`. Both are public by
-   design: the key can only call the page's three functions.
-4. Add repo secrets `SUPABASE_URL` and `SUPABASE_SECRET_KEY` (a secret
-   key, `sb_secret_...`, which can also call the re-run's two functions):
-
-   ```sh
-   gh secret set SUPABASE_URL
-   gh secret set SUPABASE_SECRET_KEY
-   ```
-
-   Never put the secret key in `js/`. Without these secrets the Action does
-   nothing.
-
-Try the re-run on one file, no database (build the image first):
+Try it on one file, no database (from this folder):
 
 ```sh
 docker build -f verify/Dockerfile -t slice-crawl-verify .
 python3 verify/verify.py --local my_code.py --helper helpers.py
 ```
 
-The container has numpy, scipy, pandas, scikit-learn and matplotlib; code
-that imports anything else Pyodide offers fails its re-run (the owner sees
-why on the board). GitHub disables scheduled Actions after 60 days without
-a push; "Run workflow" on the Actions tab re-runs by hand.
-
-Moderating, in the Table Editor (schema `private`): in `entries`,
-`hidden = true` takes an entry down and `status = 'pending'` re-runs it;
-each entry keeps its code (`source`) and the seed it was re-run on. In
-`boards`, `open = false` closes a board to new entries (it stays visible
-with its code).
-
-What's left to trust: a student can still post under someone else's name,
-or post code they didn't write; a board's code only keeps strangers out.
-
-## Run locally
-
-```sh
-python3 -m http.server 8000   # then visit http://localhost:8000
-```
-
-(Opening `index.html` as a file won't work: the worker needs http.)
-`#practice` and `#leaderboard` link straight to a tab.
-
-## Publish on GitHub Pages
-
-Pages is built by `.github/workflows/pages.yml` on every push to `main`. It
-stamps `js/version.js` with the commit and build time, which the footer
-shows ("local copy" when run locally). One-time setup:
-
-```sh
-gh repo create matthigger/slice_crawl --public --source . --push
-gh api -X POST repos/matthigger/slice_crawl/pages -f build_type=workflow
-```
-
-The site then lives at <https://matthigger.github.io/slice_crawl/>.
-
 ## Layout
 
 | file | role |
 |------|------|
 | `index.html` | page, help text, controls |
-| `style.css` | layout, table and dialog styles (same look as the other demos) |
-| `js/app.js` | editor and files, setup, runs table, replay and posting flow, tabs |
-| `js/py.js` | the page's handle on the Python worker (call, stop) |
+| `puzzle.css` | its post-mortem plot styles |
+| `js/puzzle.js` | its project id, bar and board columns |
+| `js/app.js` | editor and files, runs table, post-mortem flow, CSV, posting, tabs |
 | `js/worker.js` | module web worker: Pyodide, runs `py/runner.py` |
-| `js/postmortem.js` | a run's crawls table, and one crawl's plot with the hidden truth |
-| `js/board.js` | leaderboard calls (Supabase RPC) and table |
-| `js/config.js` | Supabase project URL and publishable key |
-| `js/version.js` | build stamp, overwritten at deploy |
+| `js/postmortem.js` | a run's crawls table, one crawl's plot with the hidden truth |
 | `py/runner.py` | load / run / replay the student's code |
-| `py/slice_crawl.py` | the puzzle's crawl simulator (copy, see above) |
-| `supabase/schema.sql` | leaderboard tables and functions |
+| `py/slice_crawl.py` | the crawl simulator (copy, see above) |
 | `verify/verify.py` | re-run waiting entries, write back their scores |
 | `verify/child.py` | the student's side of a re-run, in the container |
 | `verify/Dockerfile` | the re-run container |
-| `.github/workflows/pages.yml` | Pages deploy |
-| `.github/workflows/verify.yml` | re-run every 10 minutes |
+
+Shared with the other puzzles: `../shared/` (styles, Python worker handle,
+leaderboard, config, site bar) and `../supabase/schema.sql`.
