@@ -43,9 +43,7 @@
         <li>Every function that takes a crawl shows up in the
           <b>Estimator</b> menu, so you can compare a few in one go. The
           leaderboard always uses <code>estimate</code>.</li>
-        <li>Each call gets a brand new crawl, so there is nothing to reset
-          between crawls. Anything callable works, even a method of an
-          object (most of you won't need this):
+        <li>Anything callable works, even a method of an object:
 <pre>class Racer:
     def __init__(self, z=2):    # runs once, when your code loads
         self.z = z
@@ -54,12 +52,6 @@
         ...
 
 estimate = Racer(z=2.5).estimate</pre></li>
-        <li>The same seed gives the same crawls. If your estimator uses
-          randomness, seed it, or a replayed crawl may differ from the
-          run.</li>
-        <li>Anything on a crawl whose name starts with an underscore
-          (<code>crawl._mean</code>) is the hidden truth: peeking at it is
-          cheating, and the competition uses a copy without it.</li>
       </ul>
     </details>
   </section>
