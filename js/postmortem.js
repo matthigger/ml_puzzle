@@ -75,20 +75,20 @@ const PostMortem = (function () {
     { label: "Result", key: q => q.hit ? 1 : 0,
       node: q => badge(q.hit ? "hit" : "miss", q.hit ? "ok" : "bad"),
       help: "Hit: your estimate is within 5 km of the epicenter." },
-    { label: "Error", html: ERR + " (km)", num: true, key: q => q.error_km,
+    { label: "Error", html: ERR + ' <span class="unit">(km)</span>', num: true, key: q => q.error_km,
       text: q => fmt(q.error_km),
       help: `${ERR}: how far your estimate <i>p̂</i> is from the ` +
             "epicenter <i>p</i> (hidden)." },
-    { label: "Start", html: DT + " (s)", num: true, key: q => q.t0_error,
+    { label: "Start", html: DT + ' <span class="unit">(s)</span>', num: true, key: q => q.t0_error,
       text: q => fmt(q.t0_error),
       help: `${DT}: your origin time minus the true one. Positive: ` +
             "you think it started later." },
     { label: "Bad clocks", num: true, key: q => q.n_bad, text: q => q.n_bad,
       help: "Stations whose clock is off by 5 to 10 s (hidden)." },
-    { label: "Noise", html: "<i>σ</i> (s)", num: true, key: q => q.noise_sd,
+    { label: "Noise", html: '<i>σ</i> <span class="unit">(s)</span>', num: true, key: q => q.noise_sd,
       text: q => q.noise_sd.toFixed(2),
       help: "<i>σ</i>: timing noise at every station (hidden)." },
-    { label: "Worst fit", html: RMAX + " (s)", num: true,
+    { label: "Worst fit", html: RMAX + ' <span class="unit">(s)</span>', num: true,
       key: q => q.max_resid, text: q => q.max_resid.toFixed(2),
       help: `${RMAX}: the station your estimate fits worst. ` +
             "<i>r<sub>i</sub></i> = predicted minus recorded arrival." },
@@ -225,8 +225,10 @@ const PostMortem = (function () {
     const head = document.createElement("p");
     head.className = "replay-head";
     head.appendChild(badge(hit ? "hit" : "miss", hit ? "ok" : "bad"));
+    const dt = et0 - res.t0;
     head.append(` Quake ${idx}: your estimate is ${err.toFixed(2)} km from ` +
-      `the epicenter, and ${fmt(et0 - res.t0)} s off its start time. ` +
+      `the epicenter, its start time ${Math.abs(dt).toFixed(2)} s ` +
+      `${dt >= 0 ? "late" : "early"}. ` +
       (badNames.length ? `Broken clocks: ${badNames.join(", ")}.`
                        : "Every clock works."));
     host.appendChild(head);
@@ -251,16 +253,18 @@ const PostMortem = (function () {
     }
     el("line", { x1: m.px(px0), y1: m.py(py0), x2: m.px(ex), y2: m.py(ey),
                  class: "q-err" }, m.g);
+    // stations lie inside the region: unclipped, so edge labels show
     res.stations.forEach(([x, y], i) => {
-      station(m.g, m.px(x), m.py(y), bad[i], name(i));
+      station(svg, m.px(x), m.py(y), bad[i], name(i));
     });
-    star(m.g, m.px(px0), m.py(py0), 9);
-    cross(m.g, m.px(ex), m.py(ey), 6, hit);
+    // on top of the stations; the estimate may fall off the map: clipped
+    star(svg, m.px(px0), m.py(py0), 9);
+    cross(el("g", { "clip-path": "url(#q-clip-map)" }, svg),
+          m.px(ex), m.py(ey), 6, hit);
 
     // ---- the close-up: the epicenter and your estimate, with room around
-    const half = Math.max(4, 1.3 * err);
-    const cx = err < 2 * half ? (px0 + ex) / 2 : px0;
-    const cy = err < 2 * half ? (py0 + ey) / 2 : py0;
+    const half = Math.max(6.5, 0.7 * err);
+    const cx = (px0 + ex) / 2, cy = (py0 + ey) / 2;
     const span = 2 * half, zx0 = cx - half, zy0 = cy - half;
     const z = panel(svg, ZOOM, zx0, zy0, span, "q-clip-zoom");
     const step = [1, 2, 5, 10, 20, 50, 100].find(v => span / v <= 5);

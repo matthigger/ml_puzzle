@@ -441,7 +441,7 @@ button.chip.file.on { background: var(--ink); color: #fff;
   pointer-events: none;
 }
 .tip i { font-family: Georgia, "Times New Roman", serif; font-size: 1.06em; }
-.runs th i { text-transform: none; letter-spacing: 0; }
+.runs th i, .runs th .unit { text-transform: none; letter-spacing: 0; }
 .pm-badge.muted { fill: #eef0f4; }
 .pm-badge-text.muted { fill: var(--muted); }
 .pm-bar { display: flex; align-items: center; justify-content: space-between;

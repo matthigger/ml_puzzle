@@ -710,7 +710,7 @@ def estimate(stations, arrivals):
     const lines = [cols.join(",")];
     for (let i = 0; i < r.n_quake; i++) {
       lines.push([quote(r.name), quote(r.estimator), r.seed, i,
-                  ...QUAKE_KEYS.map(k => d[k][i]),
+                  ...QUAKE_KEYS.map(k => round3(d[k][i])),
                   d.error_km[i] <= HIT_KM ? 1 : 0].join(","));
     }
     const slug = s => s.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
