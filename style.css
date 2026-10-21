@@ -423,6 +423,23 @@ button.chip.file.on { background: var(--ink); color: #fff;
 .badge.warn { background: #fef3c7; color: var(--warn); }
 
 /* -------------------------------------------------------- post-mortem */
+.tip {
+  position: fixed;
+  z-index: 20;
+  max-width: 290px;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: .84rem;
+  line-height: 1.45;
+  box-shadow: 0 6px 20px rgba(16, 24, 40, .18);
+  pointer-events: none;
+}
+.tip i { font-family: Georgia, "Times New Roman", serif; font-size: 1.06em; }
+.runs th i { text-transform: none; letter-spacing: 0; }
+.pm-badge.muted { fill: #eef0f4; }
+.pm-badge-text.muted { fill: var(--muted); }
 .pm-bar { display: flex; align-items: center; justify-content: space-between;
   gap: 4px 16px; flex-wrap: wrap; }
 .pm-bar .hint { margin: 0 !important; }
