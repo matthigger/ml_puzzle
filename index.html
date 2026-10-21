@@ -197,10 +197,17 @@ estimate = Racer(z=2.5).estimate</pre></li>
           <button id="remove-btn" class="quiet">Remove my entry</button>
         </div>
       </div>
+      <form id="board-form" class="board-form">
+        <label class="field"><span>Code</span>
+          <input id="board-code" autocomplete="off" spellcheck="false"
+            placeholder="your class's leaderboard code, from the assignment"></label>
+        <button type="submit" class="primary">Show</button>
+      </form>
+      <p id="board-title" class="board-title" hidden></p>
       <p class="hint">Every score here is our own re-run: 5000 fresh crawls
         of the official setup, on a seed nobody has seen. To add yours, use
         <b>Add to leaderboard</b> on a row of the Practice tab's runs.</p>
-      <div class="table-wrap">
+      <div class="table-wrap" id="board-wrap" hidden>
         <table id="board" class="runs">
           <thead><tr>
             <th class="num">#</th><th>Name</th><th>Method</th>
@@ -222,8 +229,8 @@ estimate = Racer(z=2.5).estimate</pre></li>
       <label class="field"><span>Your name</span>
         <input id="post-name" maxlength="40" required autocomplete="off"
           placeholder="as it shows on the board"></label>
-      <label class="field"><span>Class code</span>
-        <input id="post-code" required autocomplete="off"
+      <label class="field"><span>Leaderboard code</span>
+        <input id="post-code" required autocomplete="off" spellcheck="false"
           placeholder="from the assignment"></label>
       <p class="callout">We re-run this code on our end, on
         <b>5000 fresh crawls with a new seed</b> nobody has seen. The board

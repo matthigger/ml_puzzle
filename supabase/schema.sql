@@ -2,59 +2,64 @@
 -- (students run Python in the browser, post their code, we re-run it).
 -- Paste into the Supabase SQL editor once; it is safe to run again.
 --
--- The pages never touch a table, and never post a score. Rows live in the
--- private schema, which the Data API doesn't expose. A page calls:
+-- A project is a kind of puzzle (slice_crawl, ...); a board is one
+-- leaderboard of it for one class: a term, a section. Each board has its own
+-- code, which students need both to see the board and to post to it, so
+-- boards stay apart. The pages never touch a table, and never post a score.
+-- Rows live in the private schema, which the Data API doesn't expose. A page
+-- calls:
 --
---   post_entry(...)          add or replace the caller's entry in a
---                            project: code only (needs the class code); it
---                            waits for a re-run
---   leaderboard(project, t)  a project's visible entries, best first;
---                            mine = true on the caller's own
---   delete_entry(project, t) remove the caller's entry
+--   leaderboard(project, code, token)  the board: {title, open, entries},
+--                                      entries best first, mine = true on
+--                                      the caller's own
+--   post_entry(...)                    add or replace the caller's entry:
+--                                      code only; it waits for a re-run
+--   delete_entry(project, code, token) remove the caller's entry
 --
 -- and each project's re-run script, with the secret key, calls:
 --
---   pending_entries(project) entries waiting for a re-run, with their code
---   set_result(...)          the re-run's score, or why it failed
+--   pending_entries(project)   entries waiting for a re-run, any board
+--   set_result(...)            the re-run's score, or why it failed
 --
 -- A score is the project's own: metrics (jsonb, shown on its board),
 -- qualifies (cleared the project's bar) and rank (lower is better among
--- those that qualify). An entry belongs to whoever holds its token: a
--- random string the page keeps in the browser. Only its sha256 is stored.
+-- those that qualify). An entry belongs to whoever holds its token: a random
+-- string the page keeps in the browser. Only its sha256 is stored.
 --
--- Afterwards, add each project and set the class code (keep it out of the
--- repo):
+-- Afterwards, add each project once, then a board per class (it prints the
+-- board's code: give it to the class, keep it out of the repo):
 --
 --   insert into private.projects (id, title) values ('slice_crawl', 'Slice Crawl')
 --   on conflict (id) do nothing;
---   insert into private.config (key, value) values ('class_code', '...')
---   on conflict (key) do update set value = excluded.value;
+--   select private.new_board('slice_crawl', 'DS4400 Fall 2026');
 --
--- A project's own code, if set ('class_code:slice_crawl'), overrides the
--- shared one. Moderate in the Table Editor (schema "private"): entries.hidden
--- takes an entry down, entries.status = 'pending' re-runs it, projects.open
--- = false stops new posts to a project.
+-- Moderate in the Table Editor (schema "private"): entries.hidden takes an
+-- entry down, entries.status = 'pending' re-runs it, boards.open = false
+-- stops new posts (the board stays visible with its code).
 
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
 
-create table if not exists private.config (
-  key text primary key,
-  value text not null
-);
-alter table private.config enable row level security;
-
 create table if not exists private.projects (
   id text primary key check (id ~ '^[a-z0-9_]{1,40}$'),
   title text not null,
-  open boolean not null default true,
   created_at timestamptz not null default now()
 );
 alter table private.projects enable row level security;
 
-create table if not exists private.entries (
+create table if not exists private.boards (
   id bigint generated always as identity primary key,
   project text not null references private.projects (id),
+  title text not null,
+  code text not null unique check (char_length(code) >= 12),
+  open boolean not null default true,
+  created_at timestamptz not null default now()
+);
+alter table private.boards enable row level security;
+
+create table if not exists private.entries (
+  id bigint generated always as identity primary key,
+  board bigint not null references private.boards (id),
   token_hash text not null,
   -- the student's name, and the run's name ("method") from their table
   name text not null,
@@ -76,16 +81,84 @@ create table if not exists private.entries (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   rerun_at timestamptz,
-  constraint entries_project_token unique (project, token_hash)
+  constraint entries_board_token unique (board, token_hash)
 );
 alter table private.entries enable row level security;
 create index if not exists entries_pending
-  on private.entries (project, updated_at) where status = 'pending';
+  on private.entries (updated_at) where status = 'pending';
 
 
 create or replace function private.token_hash(token text) returns text
 language sql immutable
 as $$ select encode(sha256(convert_to(coalesce(token, ''), 'UTF8')), 'hex') $$;
+
+-- a new board for project, with a fresh random code (returned)
+create or replace function private.new_board(project text, title text)
+returns text
+language plpgsql
+as $$
+declare
+  abc text := 'abcdefghjkmnpqrstuvwxyz23456789';
+  new_code text;
+begin
+  loop
+    new_code := split_part(project, '_', 1) || '-' ||
+      (select string_agg(substr(abc, 1 + floor(random() * length(abc))::int, 1)
+                         || case when i = 4 then '-' else '' end, '')
+         from generate_series(1, 8) i);
+    exit when not exists (select 1 from private.boards b where b.code = new_code);
+  end loop;
+  insert into private.boards (project, title, code)
+    values (new_board.project, new_board.title, new_code);
+  return new_code;
+end;
+$$;
+
+-- the board a project's code opens, or an error a student can act on
+create or replace function private.board_for(project text, code text)
+returns private.boards
+language plpgsql stable
+as $$
+declare
+  b private.boards;
+begin
+  select * into b from private.boards x
+   where x.project = board_for.project and x.code = btrim(coalesce(board_for.code, ''));
+  if b.id is null then
+    raise exception 'That code doesn''t open a leaderboard.';
+  end if;
+  return b;
+end;
+$$;
+
+
+create or replace function public.leaderboard(project text, code text,
+                                              token text default null)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  b private.boards := private.board_for(project, code);
+  hash text := private.token_hash(token);
+begin
+  return jsonb_build_object('title', b.title, 'open', b.open, 'entries',
+    coalesce((
+      -- a failed re-run is shown to its owner only, with the reason
+      select jsonb_agg(jsonb_build_object(
+               'name', e.name, 'method', e.method, 'status', e.status,
+               'metrics', e.metrics, 'qualifies', e.qualifies,
+               'error', case when e.token_hash = hash then e.error end,
+               'updated_at', e.updated_at, 'mine', e.token_hash = hash)
+             order by e.status = 'done' desc, e.qualifies desc nulls last,
+                      e.rank asc nulls last, e.updated_at asc)
+        from private.entries e
+       where e.board = b.id and not e.hidden
+         and (e.status <> 'failed' or e.token_hash = hash)), '[]'::jsonb));
+end;
+$$;
 
 
 create or replace function public.post_entry(
@@ -102,23 +175,14 @@ security definer
 set search_path = ''
 as $$
 declare
+  b private.boards := private.board_for(project, code);
   hash text := private.token_hash(token);
   clean text := btrim(coalesce(name, ''));
   clean_method text := btrim(coalesce(method, ''));
-  want text;
   last_post timestamptz;
 begin
-  if not exists (select 1 from private.projects p
-                  where p.id = post_entry.project and p.open) then
+  if not b.open then
     raise exception 'This leaderboard is closed.';
-  end if;
-  select coalesce(
-    (select c.value from private.config c
-      where c.key = 'class_code:' || post_entry.project),
-    (select c.value from private.config c where c.key = 'class_code'))
-    into want;
-  if want is null or code is distinct from want then
-    raise exception 'That class code is not right.';
   end if;
   if char_length(coalesce(token, '')) < 32 then
     raise exception 'Bad entry token.';
@@ -140,21 +204,20 @@ begin
   end if;
 
   select e.updated_at into last_post from private.entries e
-   where e.project = post_entry.project and e.token_hash = hash;
+   where e.board = b.id and e.token_hash = hash;
   if last_post > now() - interval '20 seconds' then
     raise exception 'Posted a moment ago: wait 20 seconds between posts.';
   end if;
   if last_post is null and (select count(*) from private.entries e
-                             where e.project = post_entry.project) >= 2000 then
+                             where e.board = b.id) >= 2000 then
     raise exception 'The leaderboard is full.';
   end if;
 
   insert into private.entries as e
-    (project, token_hash, name, method, entry_point, source)
+    (board, token_hash, name, method, entry_point, source)
   values
-    (post_entry.project, hash, clean, clean_method, post_entry.entry_point,
-     post_entry.source)
-  on conflict on constraint entries_project_token do update set
+    (b.id, hash, clean, clean_method, post_entry.entry_point, post_entry.source)
+  on conflict on constraint entries_board_token do update set
     name = excluded.name,
     method = excluded.method,
     entry_point = excluded.entry_point,
@@ -168,48 +231,19 @@ end;
 $$;
 
 
-create or replace function public.leaderboard(project text, token text default null)
-returns table (
-  name text,
-  method text,
-  status text,
-  metrics jsonb,
-  qualifies boolean,
-  error text,
-  updated_at timestamptz,
-  mine boolean
-)
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  with e as (
-    select e.*, e.token_hash = private.token_hash(token) as mine
-      from private.entries e
-     where e.project = leaderboard.project and not e.hidden
-  )
-  -- a failed re-run is shown to its owner only, with the reason
-  select e.name, e.method, e.status, e.metrics, e.qualifies,
-         case when e.mine then e.error end, e.updated_at, e.mine
-    from e
-   where e.status <> 'failed' or e.mine
-   order by e.status = 'done' desc,
-            e.qualifies desc nulls last,
-            e.rank asc nulls last,
-            e.updated_at asc;
-$$;
-
-
-create or replace function public.delete_entry(project text, token text)
+create or replace function public.delete_entry(project text, code text,
+                                               token text)
 returns void
-language sql
+language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  b private.boards := private.board_for(project, code);
+begin
   delete from private.entries e
-   where e.project = delete_entry.project
-     and e.token_hash = private.token_hash(token);
+   where e.board = b.id and e.token_hash = private.token_hash(token);
+end;
 $$;
 
 
@@ -222,7 +256,8 @@ set search_path = ''
 as $$
   select e.id, e.version, e.entry_point, e.source
     from private.entries e
-   where e.project = pending_entries.project and e.status = 'pending'
+    join private.boards b on b.id = e.board
+   where b.project = pending_entries.project and e.status = 'pending'
      and not e.hidden
    order by e.updated_at;
 $$;
@@ -256,20 +291,23 @@ $$;
 
 
 -- The pages' three functions are callable by the publishable (anon) key;
--- the re-runs' two by the secret (service_role) key only.
+-- the re-runs' two by the secret (service_role) key only; the private
+-- helpers by neither.
 revoke execute on function
   private.token_hash(text),
+  private.new_board(text, text),
+  private.board_for(text, text),
+  public.leaderboard(text, text, text),
   public.post_entry(text, text, text, text, text, text, jsonb),
-  public.leaderboard(text, text),
-  public.delete_entry(text, text),
+  public.delete_entry(text, text, text),
   public.pending_entries(text),
   public.set_result(bigint, integer, text, jsonb, boolean, double precision,
                     bigint, text)
   from public, anon, authenticated;
 grant execute on function
+  public.leaderboard(text, text, text),
   public.post_entry(text, text, text, text, text, text, jsonb),
-  public.leaderboard(text, text),
-  public.delete_entry(text, text)
+  public.delete_entry(text, text, text)
   to anon, authenticated;
 grant execute on function
   public.pending_entries(text),

@@ -61,13 +61,18 @@ stay outside it and answer one taste at a time (`verify/child.py`), so the
 hidden truth is out of reach. A GitHub Action (`verify.yml`) runs it every
 10 minutes.
 
-1. Create a free [Supabase](https://supabase.com) project. In the SQL
-   editor, run `supabase/schema.sql`.
-2. Set the class code (keep it out of this repo; put it in the assignment):
+1. Create a free [Supabase](https://supabase.com) project (one serves
+   every puzzle site of this kind). In the SQL editor, run
+   `supabase/schema.sql`.
+2. Add the project once, then a **board** per class (a term or section).
+   Each board has its own code, which students need to see it and to post
+   to it; `new_board` makes one and prints it (keep it out of this repo,
+   put it in the assignment):
 
    ```sql
-   insert into private.config (key, value) values ('class_code', '...')
-   on conflict (key) do update set value = excluded.value;
+   insert into private.projects (id, title) values ('slice_crawl', 'Slice Crawl')
+   on conflict (id) do nothing;
+   select private.new_board('slice_crawl', 'DS4400 Fall 2026');
    ```
 
 3. Put the project URL and its **publishable** key (Project Settings, API
@@ -96,13 +101,14 @@ that imports anything else Pyodide offers fails its re-run (the owner sees
 why on the board). GitHub disables scheduled Actions after 60 days without
 a push; "Run workflow" on the Actions tab re-runs by hand.
 
-Moderating, in the Table Editor (schema `private`, table `entries`):
-`hidden = true` takes an entry down; `status = 'pending'` re-runs it. Each
-entry keeps its code (`source`) and the seed it was re-run on. Changing the
-class code stops new posts with the old one; existing entries stay.
+Moderating, in the Table Editor (schema `private`): in `entries`,
+`hidden = true` takes an entry down and `status = 'pending'` re-runs it;
+each entry keeps its code (`source`) and the seed it was re-run on. In
+`boards`, `open = false` closes a board to new entries (it stays visible
+with its code).
 
 What's left to trust: a student can still post under someone else's name,
-or post code they didn't write; the class code only keeps strangers out.
+or post code they didn't write; a board's code only keeps strangers out.
 
 ## Run locally
 

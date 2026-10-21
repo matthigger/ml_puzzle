@@ -423,6 +423,10 @@ button.chip.file.on { background: var(--ink); color: #fff;
 .badge.warn { background: #fef3c7; color: var(--warn); }
 
 /* -------------------------------------------------------- post-mortem */
+.board-form { display: flex; align-items: center; gap: 10px;
+  max-width: 620px; margin: 4px 0 6px; }
+.board-form .field { flex: 1; margin: 0; }
+.board-title { font-weight: 700; font-size: 1.05rem; margin: 8px 0 2px !important; }
 .tip {
   position: fixed;
   z-index: 20;

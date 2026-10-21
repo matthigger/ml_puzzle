@@ -4,9 +4,10 @@
 // project's publishable key (safe to publish: it can only call those).
 //
 //   Board.enabled            false until js/config.js has a project
-//   Board.list()             -> entries, best first
-//   Board.post(entry)        add or replace this browser's entry
-//   Board.remove()           delete this browser's entry
+//   Board.list(code)         -> {title, open, entries}, entries best first
+//   Board.post(entry)        add or replace this browser's entry (entry.code
+//                            names the board)
+//   Board.remove(code)       delete this browser's entry on that board
 //   Board.render(tbody, entries)
 //
 // An entry belongs to a random token kept in this browser's localStorage;
@@ -44,8 +45,9 @@ const Board = (function () {
   }
 
   const project = CONFIG.project;
-  const list = () => rpc("leaderboard", { project, token: token() });
-  const remove = () => rpc("delete_entry", { project, token: token() });
+  // every board has its own code, needed to see it and to post to it
+  const list = code => rpc("leaderboard", { project, code, token: token() });
+  const remove = code => rpc("delete_entry", { project, code, token: token() });
   const post = e => rpc("post_entry", { ...e, project, token: token() });
 
   const pct = v => (100 * v).toFixed(1) + "%";
