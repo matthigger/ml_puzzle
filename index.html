@@ -29,7 +29,7 @@
       <p><code>crawl.taste(i)</code> buys a slice from shop <code>i</code>
         and returns its rating; <code>estimate(crawl)</code> returns the
         shop you believe is best. Everything runs here in your browser, and
-        nothing leaves it unless you post to the leaderboard.</p>
+        nothing leaves it unless you add a run to the leaderboard.</p>
     </div>
     <details class="howto" open data-show="practice">
       <summary>How your code is run</summary>
@@ -41,8 +41,8 @@
           loading stays quick. Add any <code>.py</code> helper files it
           imports.</li>
         <li>Every function that takes a crawl shows up in the
-          <b>Estimator</b> menu, so you can compare a few in one go. The
-          leaderboard always uses <code>estimate</code>.</li>
+          <b>Estimator</b> menu, so you can compare a few in one go. Name a
+          run to tell versions apart; each row keeps the code it ran.</li>
         <li>Anything callable works, even a method of an object:
 <pre>class Racer:
     def __init__(self, z=2):    # runs once, when your code loads
@@ -81,6 +81,9 @@ estimate = Racer(z=2.5).estimate</pre></li>
               <option>load your code first</option>
             </select>
           </div>
+          <label class="field"><span>Run name</span>
+            <input id="run-name" maxlength="60" autocomplete="off"
+              placeholder="optional, e.g. race z=2.5"></label>
           <div id="load-msg" class="msg" hidden></div>
           <details id="output-box" class="output" hidden>
             <summary>Printed while loading</summary>
@@ -88,6 +91,9 @@ estimate = Racer(z=2.5).estimate</pre></li>
           </details>
         </section>
 
+      </div>
+
+      <div class="col">
         <section class="card">
           <h2>Crawls</h2>
           <div class="field">
@@ -134,30 +140,11 @@ estimate = Racer(z=2.5).estimate</pre></li>
           <div class="progress" aria-hidden="true"><div id="bar"></div></div>
           <p id="run-msg" class="msg-line">&nbsp;</p>
         </section>
-      </div>
-
-      <div class="col">
         <section class="card" id="latest-card">
           <h2>Latest run</h2>
           <div id="latest" class="readout">
             <p class="muted">Run an estimator to see how it did.</p>
           </div>
-        </section>
-        <section class="card plot">
-          <div class="plot-head">
-            <h3>Fraction right against average slices</h3>
-          </div>
-          <p id="chart-setup" class="hint"></p>
-          <svg id="chart" class="chart" viewBox="0 0 560 330"
-            role="img" aria-label="Runs: fraction of crawls right against
-            average slices per crawl"></svg>
-          <div class="key">
-            <span><i class="dot you"></i>your runs</span>
-            <span><i class="dot base"></i>taste every shop n times</span>
-            <span><i class="ln bar"></i>95% bar</span>
-            <span><i class="ln err"></i>&plusmn; 2 standard deviations</span>
-          </div>
-          <div id="chart-tip" class="chart-tip" hidden></div>
         </section>
       </div>
     </div>
@@ -173,7 +160,7 @@ estimate = Racer(z=2.5).estimate</pre></li>
       <div class="table-wrap">
         <table id="runs" class="runs">
           <thead><tr>
-            <th>Estimator</th><th>Setup</th><th class="num">Crawls</th>
+            <th>Run</th><th>Setup</th><th class="num">Crawls</th>
             <th class="num">Right</th><th class="num">Avg slices</th>
             <th class="num">Median</th><th class="num">90th pct</th>
             <th>95%?</th><th class="num">Time</th><th></th>
@@ -183,7 +170,8 @@ estimate = Racer(z=2.5).estimate</pre></li>
       </div>
       <p class="hint">Saved in this browser only. &ldquo;Right&rdquo; is
         &plusmn; 2 standard deviations; <b>maybe</b> means that range
-        includes 95%, so run more crawls to tell.</p>
+        includes 95%, so run more crawls to tell. Click a name to rename
+        it.</p>
     </section>
 
     <section class="card wide" data-show="practice" id="replay-card">
@@ -201,47 +189,54 @@ estimate = Racer(z=2.5).estimate</pre></li>
     </section>
 
     <!-- ----------------------------------------------------- leaderboard -->
-    <div class="panel board" data-show="board">
-      <section class="card">
-        <h2>Post your score</h2>
-        <p>Runs your <code>estimate</code> on 5000 fresh crawls of the
-          official setup (a new random seed each time) and posts how it did
-          under a name you choose. Posting again replaces your entry.</p>
-        <label class="field"><span>Name</span>
-          <input id="post-name" maxlength="40" placeholder="any name you
-            like"></label>
-        <label class="field"><span>Class code</span>
-          <input id="post-code" autocomplete="off" placeholder="from the
-            assignment"></label>
+    <section class="card" data-show="board">
+      <div class="card-head">
+        <h2>Leaderboard</h2>
         <div class="buttons">
-          <button id="post-btn" class="primary" disabled>Run and post</button>
-          <button id="post-stop" disabled>Stop</button>
+          <button id="refresh-btn" class="quiet">Refresh</button>
           <button id="remove-btn" class="quiet">Remove my entry</button>
         </div>
-        <p id="post-msg" class="msg-line">&nbsp;</p>
-        <p class="hint">Your code is saved with your entry so the instructor
-          can re-run the top scores (a check mark means it was re-run). Only
-          the instructor can see it.</p>
-      </section>
-      <section class="card">
-        <div class="card-head">
-          <h2>Leaderboard</h2>
-          <button id="refresh-btn" class="quiet">Refresh</button>
-        </div>
-        <div class="table-wrap">
-          <table id="board" class="runs">
-            <thead><tr>
-              <th class="num">#</th><th>Name</th><th class="num">Right</th>
-              <th class="num">Avg slices</th><th class="num">Median</th>
-              <th class="num">90th pct</th><th>Checked</th><th>Posted</th>
-            </tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <p id="board-msg" class="hint"></p>
-      </section>
-    </div>
+      </div>
+      <p class="hint">Every score here is our own re-run: 5000 fresh crawls
+        of the official setup, on a seed nobody has seen. To add yours, use
+        <b>Add to leaderboard</b> on a row of the Practice tab's runs.</p>
+      <div class="table-wrap">
+        <table id="board" class="runs">
+          <thead><tr>
+            <th class="num">#</th><th>Name</th><th>Method</th>
+            <th class="num">Right</th><th class="num">Avg slices</th>
+            <th class="num">Median</th><th class="num">90th pct</th>
+            <th>Posted</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="board-msg" class="hint"></p>
+    </section>
   </main>
+
+  <dialog id="post-dialog" class="dialog" aria-labelledby="post-title">
+    <form id="post-form" method="dialog">
+      <h2 id="post-title">Add to the leaderboard</h2>
+      <p>Run: <b id="post-run"></b></p>
+      <label class="field"><span>Your name</span>
+        <input id="post-name" maxlength="40" required autocomplete="off"
+          placeholder="as it shows on the board"></label>
+      <label class="field"><span>Class code</span>
+        <input id="post-code" required autocomplete="off"
+          placeholder="from the assignment"></label>
+      <p class="hint">We re-run this code on our end: 5000 fresh crawls of
+        the official setup, on a new seed nobody has seen. The board shows
+        that score, not this run's; it usually appears within the hour.
+        Your code is saved with the entry, and only the instructor can see
+        it. Adding another run later replaces your entry.</p>
+      <p id="post-msg" class="msg-line">&nbsp;</p>
+      <div class="buttons dialog-buttons">
+        <button type="button" id="post-cancel">Cancel</button>
+        <button type="submit" id="post-submit" class="primary">Add</button>
+      </div>
+    </form>
+  </dialog>
 
   <footer>
     <a href="https://github.com/matthigger/slice_crawl">Source on GitHub</a>
@@ -252,7 +247,6 @@ estimate = Racer(z=2.5).estimate</pre></li>
   <script src="js/version.js"></script>
   <script src="js/config.js"></script>
   <script src="js/py.js"></script>
-  <script src="js/chart.js"></script>
   <script src="js/replay.js"></script>
   <script src="js/board.js"></script>
   <script src="js/app.js"></script>

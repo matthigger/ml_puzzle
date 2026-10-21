@@ -1,5 +1,6 @@
-// The page: editor and files, crawl setup, runs (table + chart), replay,
-// leaderboard posting, tabs. Python work goes through Py (js/py.js).
+// The page: editor and files, crawl setup, runs table (each run keeps its
+// code), replay, leaderboard posting, tabs. Python work goes through Py
+// (js/py.js).
 
 (function () {
   const $ = id => document.getElementById(id);
@@ -70,9 +71,7 @@ def estimate(crawl):
     const ready = Py.ready && !busy;
     $("run-btn").disabled = !ready;
     $("base-btn").disabled = !ready;
-    $("post-btn").disabled = !ready || !Board.enabled;
     $("stop-btn").disabled = !busy;
-    $("post-stop").disabled = !busy;
     updateReplayNav();
   }
 
@@ -178,9 +177,10 @@ def estimate(crawl):
 
   // ---------------------------------------------------------------- runs
   // runs name on setup; returns the run's record (also kept in runs), or
-  // null after an error or stop
-  async function runOne(name, setup,
-                        { baseline = false, label = name, onProgress } = {}) {
+  // null after an error or stop. code ({main, helpers}) is what the run
+  // loaded, kept so the row can be reopened or posted later
+  async function runOne(name, setup, { baseline = false, label = name,
+                                       code = null, onProgress } = {}) {
     const t0 = performance.now();
     const every = Math.max(10, Math.round(setup.n_crawl / 100));
     let res;
@@ -196,6 +196,7 @@ def estimate(crawl):
     }
     const rec = {
       id: Date.now() + Math.random(), name: label, estimator: name, baseline,
+      code,
       key: setupKey(setup), n_shop: setup.n_shop, family: setup.family,
       race: setup.race, n_crawl: setup.n_crawl, seed: setup.seed,
       accuracy: res.accuracy, accuracy_se: res.accuracy_se,
@@ -225,9 +226,12 @@ def estimate(crawl):
     runMsg("Loading your code...");
     if (!(await ensureLoaded())) { runMsg("Fix your code first.", "error"); return; }
     const name = $("estimator").value;
+    const label = $("run-name").value.trim() || name;
+    const code = { main: loaded.source, helpers: JSON.parse(loaded.helpers) };
     setBusy(true);
     runMsg("Running...");
-    const rec = await runOne(name, setup, { onProgress: progressBar });
+    const rec = await runOne(name, setup,
+                             { label, code, onProgress: progressBar });
     setBusy(false);
     if (!rec) {
       $("bar").style.width = "0";
@@ -235,6 +239,7 @@ def estimate(crawl):
       return;
     }
     $("bar").style.width = "100%";
+    $("run-name").value = "";
     runMsg(`Done in ${rec.seconds.toFixed(1)} s.`);
     renderAll();
     const firstWrong = latest.correct.indexOf(false);
@@ -283,7 +288,8 @@ def estimate(crawl):
         if (cls) td.className = cls;
         return td;
       };
-      add(r.name);
+      if (r.baseline) add(r.name);
+      else tr.insertCell().appendChild(nameInput(r));
       add(r.key + (r.seed ? `, seed ${r.seed}` : ""), "muted");
       add(r.n_crawl, "num");
       add(`${pct(r.accuracy)} ± ${(200 * r.accuracy_se).toFixed(1)}`, "num");
@@ -294,17 +300,69 @@ def estimate(crawl):
       add(v).appendChild(Object.assign(document.createElement("i"),
         { className: "status-dot " + cls }));
       add(r.seconds.toFixed(1) + " s", "num");
-      const del = document.createElement("button");
-      del.className = "x";
-      del.title = "Remove this run";
-      del.textContent = "×";
-      del.onclick = () => {
+      const acts = document.createElement("div");
+      acts.className = "acts";
+      tr.insertCell().appendChild(acts);
+      if (r.code) {
+        acts.append(button("Load code", "Put this run's code back in the " +
+                           "editor", () => loadRunCode(r)),
+                    button("Add to leaderboard", "Re-run this code on our " +
+                           "end and post its score", () => openPost(r)));
+      }
+      const del = button("×", "Remove this run", () => {
         runs = runs.filter(x => x.id !== r.id);
         store.set("runs", runs);
         renderAll();
-      };
-      tr.insertCell().appendChild(del);
+      });
+      del.className = "x";
+      acts.appendChild(del);
     }
+  }
+
+  function button(text, title, onclick) {
+    const b = document.createElement("button");
+    b.textContent = text;
+    b.title = title;
+    b.onclick = onclick;
+    return b;
+  }
+
+  // a run's name, renamed in place
+  function nameInput(r) {
+    const inp = document.createElement("input");
+    inp.className = "name-edit";
+    inp.maxLength = 60;
+    inp.value = r.name;
+    inp.title = `Rename (estimator: ${r.estimator})`;
+    inp.setAttribute("aria-label", "Run name");
+    inp.onchange = () => {
+      r.name = inp.value.trim() || r.estimator;
+      inp.value = r.name;
+      store.set("runs", runs);
+      renderLatest();
+    };
+    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
+    return inp;
+  }
+
+  async function loadRunCode(r) {
+    if (busy) return;
+    const same = editor.value === r.code.main &&
+      helperKey() === JSON.stringify(r.code.helpers);
+    if (!same && !confirm(`Replace the editor's code and helper files with ` +
+                          `the code of "${r.name}"?`)) return;
+    editor.value = r.code.main;
+    helpers = { ...r.code.helpers };
+    store.set("code", editor.value);
+    store.set("helpers", helpers);
+    renderHelpers();
+    $("run-name").value = r.name === r.estimator ? "" : r.name;
+    await loadCode();
+    const sel = $("estimator");
+    if ([...sel.options].some(o => o.value === r.estimator)) {
+      sel.value = r.estimator;
+    }
+    editor.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   function renderLatest() {
@@ -317,7 +375,7 @@ def estimate(crawl):
     }
     const [v, cls] = verdict(r);
     const rows = [
-      ["Estimator", r.name],
+      ["Run", r.name === r.estimator ? r.name : `${r.name} (${r.estimator})`],
       ["Crawls", `${r.n_crawl} (${r.key}, seed ${r.seed})`],
       ["Right", `${pct(r.accuracy)} ± ${pct(2 * r.accuracy_se)}`],
       ["Average slices", r.mean_slices.toFixed(1)],
@@ -341,19 +399,9 @@ def estimate(crawl):
     host.appendChild(p);
   }
 
-  function renderChart() {
-    const key = setupKey(formSetup());
-    const shown = runs.filter(r => r.key === key);
-    $("chart-setup").textContent = `Runs on this setup: ${key}` +
-      (shown.length < runs.length ? ` (${runs.length - shown.length} ` +
-       "other runs are in the table)" : "");
-    Chart.draw($("chart"), shown, latest && latest.id, $("chart-tip"));
-  }
-
   function renderAll() {
     renderRuns();
     renderLatest();
-    renderChart();
     updateReplayNav();
   }
 
@@ -415,47 +463,43 @@ def estimate(crawl):
     }
   }
 
-  async function postClicked() {
-    if (busy) return;
+  // the post dialog: the run being posted, while it's open
+  let posting = null;
+
+  function openPost(r) {
+    posting = r;
+    $("post-run").textContent = r.name;
+    const saved = store.get("post", {});
+    $("post-name").value = saved.name || "";
+    $("post-code").value = saved.code || "";
+    postMsg(Board.enabled ? "" : "The leaderboard isn't connected yet.",
+            Board.enabled ? "" : "error");
+    $("post-submit").disabled = !Board.enabled;
+    $("post-dialog").showModal();
+  }
+
+  async function submitPost(e) {
+    e.preventDefault();
+    const r = posting;
     const name = $("post-name").value.trim(), code = $("post-code").value.trim();
+    if (!r || !name || !code) return;
     store.set("post", { name, code });
-    if (!name) { postMsg("Pick a name first.", "error"); return; }
-    if (!code) { postMsg("Enter the class code from the assignment.", "error"); return; }
-    postMsg("Loading your code...");
-    if (!(await ensureLoaded()) || !loaded.names.includes("estimate")) {
-      postMsg("Your code needs an estimate(crawl) that loads without " +
-              "errors (see the Practice tab).", "error");
-      return;
-    }
-    const seed = crypto.getRandomValues(new Uint32Array(1))[0] >>> 1;
-    const setup = { ...OFFICIAL, n_crawl: 5000, seed };
-    setBusy(true);
-    const rec = await runOne("estimate", setup, { label: "estimate (posted)",
-      onProgress: (d, n, right) =>
-        postMsg(`Running: ${d} of ${n} crawls, ${pct(right / d)} right`) });
-    setBusy(false);
-    if (!rec) {
-      postMsg(Py.ready ? "Your estimate failed: see the Practice tab." : "Stopped.",
-              "error");
-      return;
-    }
-    renderAll();
-    postMsg(`${pct(rec.accuracy)} right, ${rec.mean_slices.toFixed(1)} ` +
-            "slices on average. Posting...");
+    $("post-submit").disabled = true;
+    postMsg("Adding...");
     try {
       await Board.post({
-        code, name, accuracy: rec.accuracy, mean_slices: rec.mean_slices,
-        median_slices: rec.median_slices, p90_slices: rec.p90_slices,
-        n_crawl: rec.n_crawl, seed: rec.seed,
-        source: { main: loaded.source, helpers,
+        code, name, method: r.name, estimator: r.estimator,
+        source: { ...r.code,
                   build: (typeof BUILD !== "undefined" && BUILD) ? BUILD.sha : null },
       });
-      postMsg(`Posted: ${pct(rec.accuracy)} right, ` +
-              `${rec.mean_slices.toFixed(1)} slices on average.`, "ok");
-    } catch (e) {
-      postMsg("Not posted: " + e.message, "error");
+    } catch (err) {
+      postMsg("Not added: " + err.message, "error");
+      $("post-submit").disabled = false;
+      return;
     }
-    refreshBoard();
+    $("post-dialog").close();
+    runMsg(`Added "${r.name}" to the leaderboard: its score shows up ` +
+           "there once we've re-run it.", "ok");
   }
 
   async function removeClicked() {
@@ -463,9 +507,10 @@ def estimate(crawl):
     if (!confirm("Remove your leaderboard entry (the one posted from this browser)?")) return;
     try {
       await Board.remove();
-      postMsg("Removed.");
+      $("board-msg").textContent = "Removed.";
     } catch (e) {
-      postMsg("Couldn't remove it: " + e.message, "error");
+      $("board-msg").textContent = "Couldn't remove it: " + e.message;
+      return;
     }
     refreshBoard();
   }
@@ -576,14 +621,13 @@ def estimate(crawl):
   };
 
   for (const b of $("preset").querySelectorAll("button")) {
-    b.onclick = () => { store.set("preset", b.dataset.v); showPreset(); renderChart(); };
+    b.onclick = () => { store.set("preset", b.dataset.v); showPreset(); };
   }
   for (const id of ["shop-lo", "shop-hi", "family", "race", "n-crawl", "seed"]) {
-    $(id).addEventListener("change", () => { saveForm(); renderChart(); });
+    $(id).addEventListener("change", saveForm);
   }
   $("run-btn").onclick = runClicked;
   $("stop-btn").onclick = stop;
-  $("post-stop").onclick = stop;
   $("base-btn").onclick = baselinesClicked;
   $("clear-btn").onclick = () => {
     if (!runs.length || !confirm("Clear every run in the table?")) return;
@@ -597,10 +641,8 @@ def estimate(crawl):
   $("prev-wrong").onclick = () => stepWrong(-1);
   $("next-wrong").onclick = () => stepWrong(1);
 
-  const saved = store.get("post", {});
-  $("post-name").value = saved.name || "";
-  $("post-code").value = saved.code || "";
-  $("post-btn").onclick = postClicked;
+  $("post-form").onsubmit = submitPost;
+  $("post-cancel").onclick = () => $("post-dialog").close();
   $("remove-btn").onclick = removeClicked;
   $("refresh-btn").onclick = refreshBoard;
   if (!Board.enabled) {

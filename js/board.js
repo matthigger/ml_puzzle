@@ -48,33 +48,45 @@ const Board = (function () {
 
   const pct = v => (100 * v).toFixed(1) + "%";
 
+  // entries arrive re-run scores first (best first), then the ones still
+  // waiting; a failed re-run comes back only to its owner, with the reason
   function render(tbody, entries) {
     tbody.replaceChildren();
-    let rank = 0, shownGap = false;
+    let rank = 0, section = null;
     for (const e of entries) {
-      const clears = e.accuracy >= 0.95;
-      if (!clears && !shownGap) {
-        shownGap = true;
+      const done = e.status === "done", clears = done && e.accuracy >= 0.95;
+      const sec = clears ? "top" : done ? "below" : "waiting";
+      if (sec !== section && sec !== "top") {
         const tr = tbody.insertRow();
         tr.className = "gap";
         const td = tr.insertCell();
         td.colSpan = 8;
-        td.textContent = "Not at 95% yet";
+        td.textContent = sec === "below" ? "Not at 95% yet" : "Waiting for re-run";
       }
+      section = sec;
       const tr = tbody.insertRow();
       if (e.mine) tr.className = "mine";
       const add = (v, cls) => {
         const td = tr.insertCell();
         td.textContent = v;
         if (cls) td.className = cls;
+        return td;
       };
       add(clears ? ++rank : "", "num");
       add(e.name + (e.mine ? " (you)" : ""));
-      add(pct(e.accuracy), "num");
-      add(e.mean_slices.toFixed(1), "num");
-      add(e.median_slices, "num");
-      add(e.p90_slices, "num");
-      add(e.verified ? "✓ re-run" : "");
+      add(e.method);
+      if (done) {
+        add(pct(e.accuracy), "num");
+        add(e.mean_slices.toFixed(1), "num");
+        add(e.median_slices, "num");
+        add(e.p90_slices, "num");
+      } else {
+        const td = add(e.status === "failed"
+          ? "Your re-run failed: " + (e.error || "").trim().split("\n").pop()
+          : "re-running soon", "muted");
+        td.colSpan = 4;
+        if (e.error) td.title = e.error;
+      }
       add(new Date(e.updated_at).toLocaleDateString("en-US",
         { month: "short", day: "numeric" }));
     }
