@@ -22,7 +22,7 @@ runs their `estimate(crawl)` on as many random crawls as they like:
   results are kept in localStorage, rebuilt by re-running when missing;
   replaying loads that run's code into Python without touching the
   editor. "Add to leaderboard" on a row posts its code (a
-  popup asks for a name and the class code, and warns about the re-run).
+  popup asks for a name and the leaderboard code, and warns about the re-run).
   "Add baselines" runs taste each shop 5 / 20 / 40 times on the same
   crawls. No chart: plotting their runs is the students' job.
 - **Leaderboard tab.** Read only. Every score on it is our own re-run
