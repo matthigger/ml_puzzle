@@ -48,6 +48,10 @@ N_QUAKE = 2000
 # wall-clock limit for one entry's whole re-run
 TIMEOUT_SEC = 15 * 60
 
+# longest protocol line accepted: an estimate is a few numbers, the load
+# reply carries at most an error message
+MAX_LINE = 1 << 16
+
 DOCKER = ['docker', 'run', '--rm', '-i', '--network', 'none', '--read-only',
           '--tmpfs', '/tmp:size=64m', '--memory', '1g', '--cpus', '1',
           '--pids-limit', '64', '--cap-drop', 'ALL']
@@ -67,7 +71,8 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         helpers (dict): {filename: source} of helper .py files
         estimator (str): name of the estimator in that code
         n_quake (int): quakes to run
-        seed (int | None): None draws a secret one
+        seed (int | None): None draws a secret one, 63 bits, too many to
+            search for from the arrivals
 
     Returns:
         result (dict): {hit_rate, mean_km, median_km, p90_km,
@@ -77,7 +82,7 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         Failed: the code didn't load, raised, returned junk or timed out
     """
     if seed is None:
-        seed = secrets.randbits(31)
+        seed = secrets.randbits(63)
     start = time.monotonic()
     proc = subprocess.Popen(DOCKER + [image], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE,
@@ -92,7 +97,9 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
     # the student's code can reach the protocol, so every message is
     # untrusted: anything malformed fails the entry, never this script
     def recv():
-        line = proc.stdout.readline()
+        line = proc.stdout.readline(MAX_LINE)
+        if line and not line.endswith('\n'):
+            raise Failed('the code printed too much')
         if not line:
             if not timer.is_alive():
                 raise Failed(f'took over {timeout // 60} minutes for '

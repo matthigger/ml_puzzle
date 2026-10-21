@@ -56,6 +56,12 @@ class Quake:
     """
 
     def __init__(self, stations, p, t0, noise_sd, clock, seed=None):
+        """Record the quake at every station.
+
+        Args:
+            seed (int | list | np.random.Generator | None): seeds the
+                timing noise; a Generator is used as is
+        """
         rng = np.random.default_rng(seed)
         self.stations = np.asarray(stations, dtype=float)
         self.n_station = len(self.stations)
@@ -76,7 +82,7 @@ class Quake:
         stations (uniform) get a clock error of 5 to 10 s, either sign.
 
         Args:
-            seed (int | None): seeds the quake and its recordings
+            seed (int | list | None): seeds the quake and its recordings
             n_station (int): stations recording it
             max_bad (int): most broken clocks
         """
@@ -89,8 +95,9 @@ class Quake:
         n_bad = int(rng.integers(0, max_bad + 1))
         bad = rng.choice(n_station, n_bad, replace=False)
         clock[bad] = rng.choice([-1, 1], n_bad) * rng.uniform(5, 10, n_bad)
-        return cls(stations, p, t0, noise_sd, clock,
-                   seed=int(rng.integers(2 ** 32)))
+        # the noise continues this stream: a small sub-seed could be
+        # searched for from the arrivals, revealing the truth
+        return cls(stations, p, t0, noise_sd, clock, seed=rng)
 
     def residual(self, theta):
         """Return predicted minus recorded arrival at each station.
@@ -128,8 +135,12 @@ def check_estimate(est):
 
 
 def sample(seed, idx, n_station=12, max_bad=3):
-    """Return quake idx of a seed: the same quakes evaluate() uses."""
-    return Quake.sample(seed * 1_000_003 + idx, n_station, max_bad)
+    """Return quake idx of a seed: the same quakes evaluate() uses.
+
+    Seeded with [seed, idx], every bit of seed counts (the re-run's secret
+    seed has 63).
+    """
+    return Quake.sample([seed, idx], n_station, max_bad)
 
 
 def evaluate(estimate, n_quake=1000, seed=0, n_station=12, max_bad=3,
