@@ -39,6 +39,9 @@
 
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
+-- board codes come from pgcrypto (Supabase keeps it in "extensions")
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create table if not exists private.projects (
   id text primary key check (id ~ '^[a-z0-9_]{1,40}$'),
@@ -51,7 +54,7 @@ create table if not exists private.boards (
   id bigint generated always as identity primary key,
   project text not null references private.projects (id),
   title text not null,
-  code text not null unique check (char_length(code) >= 12),
+  code text not null unique check (char_length(code) >= 16),
   open boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -92,20 +95,25 @@ create or replace function private.token_hash(token text) returns text
 language sql immutable
 as $$ select encode(sha256(convert_to(coalesce(token, ''), 'UTF8')), 'hex') $$;
 
--- a new board for project, with a fresh random code (returned)
+-- a new board for project, with a fresh random code (returned), e.g.
+-- slice-7kq9-fx2m-0hdw: 12 symbols from pgcrypto's CSPRNG, 5 bits each (60
+-- bits), from 32 that can't be misread (no i, l, o, 1)
 create or replace function private.new_board(project text, title text)
 returns text
 language plpgsql
 as $$
 declare
-  abc text := 'abcdefghjkmnpqrstuvwxyz23456789';
+  abc text := 'abcdefghjkmnpqrstuvwxyz023456789';
+  raw bytea;
   new_code text;
 begin
   loop
-    new_code := split_part(project, '_', 1) || '-' ||
-      (select string_agg(substr(abc, 1 + floor(random() * length(abc))::int, 1)
-                         || case when i = 4 then '-' else '' end, '')
-         from generate_series(1, 8) i);
+    raw := extensions.gen_random_bytes(12);
+    new_code := split_part(project, '_', 1);
+    for i in 0..11 loop
+      if i % 4 = 0 then new_code := new_code || '-'; end if;
+      new_code := new_code || substr(abc, 1 + (get_byte(raw, i) & 31), 1);
+    end loop;
     exit when not exists (select 1 from private.boards b where b.code = new_code);
   end loop;
   insert into private.boards (project, title, code)
