@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Slice Crawl</title>
+  <meta name="description" content="Practice site for the Slice Crawl
+    puzzle: run your estimate() on as many random pizza crawls as you like,
+    see how often it names the best shop and how many slices it tastes.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 29 L4 6 Q16 1 28 6 Z' fill='%23fbbf24' stroke='%23b45309' stroke-width='2' stroke-linejoin='round'/%3E%3Ccircle cx='13' cy='10' r='2.6' fill='%23dc2626'/%3E%3Ccircle cx='20' cy='13' r='2.6' fill='%23dc2626'/%3E%3Ccircle cx='15.5' cy='19' r='2.4' fill='%23dc2626'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Slice Crawl</h1>
+    <p class="sub">Practice site for the puzzle: try your
+      <code>estimate()</code> on as many random crawls as you like.</p>
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" data-mode="practice">Practice</button>
+      <button class="tab" role="tab" data-mode="board">Leaderboard</button>
+    </nav>
+  </header>
+
+  <section class="intro card">
+    <div>
+      <p class="goal"><b>Goal:</b> name the true best of the pizza shops in
+        at least 95% of crawls, tasting as few slices (averaged over many
+        crawls) as you can.</p>
+      <p><code>crawl.taste(i)</code> buys a slice from shop <code>i</code>
+        and returns its rating; <code>estimate(crawl)</code> returns the
+        shop you believe is best. Everything runs here in your browser, and
+        nothing leaves it unless you post to the leaderboard.</p>
+    </div>
+    <details class="howto" open data-show="practice">
+      <summary>How your code is run</summary>
+      <ul>
+        <li>Paste your code, or open your <code>.py</code> or
+          <code>.ipynb</code>. A notebook's code cells run top to bottom;
+          lines starting with <code>!</code> or <code>%</code> are skipped,
+          and its own <code>evaluate()</code> calls run only 50 crawls, so
+          loading stays quick. Add any <code>.py</code> helper files it
+          imports.</li>
+        <li>Every function that takes a crawl shows up in the
+          <b>Estimator</b> menu, so you can compare a few in one go. The
+          leaderboard always uses <code>estimate</code>.</li>
+        <li>Each call gets a brand new crawl, so there is nothing to reset
+          between crawls. Anything callable works, even a method of an
+          object (most of you won't need this):
+<pre>class Racer:
+    def __init__(self, z=2):    # runs once, when your code loads
+        self.z = z
+
+    def estimate(self, crawl):  # runs once per crawl
+        ...
+
+estimate = Racer(z=2.5).estimate</pre></li>
+        <li>The same seed gives the same crawls. If your estimator uses
+          randomness, seed it, or a replayed crawl may differ from the
+          run.</li>
+        <li>Anything on a crawl whose name starts with an underscore
+          (<code>crawl._mean</code>) is the hidden truth: peeking at it is
+          cheating, and the competition uses a copy without it.</li>
+      </ul>
+    </details>
+  </section>
+
+  <main>
+    <!-- ------------------------------------------------------ practice -->
+    <div class="panel" data-show="practice">
+      <div class="col">
+        <section class="card code-card">
+          <div class="card-head">
+            <h2>Your code</h2>
+            <span id="py-status" class="pill">Starting Python...</span>
+          </div>
+          <textarea id="code" spellcheck="false" autocomplete="off"
+            aria-label="Your code"></textarea>
+          <div class="buttons">
+            <button id="open-btn">Open .py / .ipynb</button>
+            <button id="helper-btn">Add helper .py</button>
+            <button id="reset-btn" class="quiet">Example</button>
+            <input id="open-file" type="file" accept=".py,.ipynb" hidden>
+            <input id="helper-file" type="file" accept=".py" multiple hidden>
+          </div>
+          <div id="helpers" class="chips"></div>
+          <div class="field">
+            <span>Estimator</span>
+            <select id="estimator" disabled>
+              <option>load your code first</option>
+            </select>
+          </div>
+          <div id="load-msg" class="msg" hidden></div>
+          <details id="output-box" class="output" hidden>
+            <summary>Printed while loading</summary>
+            <pre id="output"></pre>
+          </details>
+        </section>
+
+        <section class="card">
+          <h2>Crawls</h2>
+          <div class="field">
+            <span>Setup</span>
+            <div class="seg" id="preset" role="radiogroup">
+              <button role="radio" data-v="official">Official</button>
+              <button role="radio" data-v="custom">Stress test</button>
+            </div>
+          </div>
+          <div id="custom" class="custom">
+            <label class="field"><span>Shops</span>
+              <span class="inline">
+                <input id="shop-lo" type="number" min="2" max="50" value="8">
+                <span>to</span>
+                <input id="shop-hi" type="number" min="2" max="50" value="8">
+              </span>
+            </label>
+            <label class="field"><span>Ratings</span>
+              <select id="family">
+                <option value="bell">bell curve</option>
+                <option value="heavy">heavy tails (now and then wildly
+                  off)</option>
+                <option value="disaster">occasional disaster (burnt,
+                  dropped)</option>
+              </select>
+            </label>
+            <label class="field"><span>Race</span>
+              <select id="race">
+                <option value="easy">easy (best shop well ahead)</option>
+                <option value="official">official</option>
+                <option value="close">close (top two nearly tied)</option>
+              </select>
+            </label>
+          </div>
+          <label class="field"><span>Crawls</span>
+            <input id="n-crawl" type="number" min="1" max="100000"
+              value="5000"></label>
+          <label class="field"><span>Seed</span>
+            <input id="seed" type="number" min="0" value="0"></label>
+          <div class="buttons run-row">
+            <button id="run-btn" class="primary" disabled>Run</button>
+            <button id="stop-btn" disabled>Stop</button>
+          </div>
+          <div class="progress" aria-hidden="true"><div id="bar"></div></div>
+          <p id="run-msg" class="msg-line">&nbsp;</p>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="card" id="latest-card">
+          <h2>Latest run</h2>
+          <div id="latest" class="readout">
+            <p class="muted">Run an estimator to see how it did.</p>
+          </div>
+        </section>
+        <section class="card plot">
+          <div class="plot-head">
+            <h3>Fraction right against average slices</h3>
+          </div>
+          <p id="chart-setup" class="hint"></p>
+          <svg id="chart" class="chart" viewBox="0 0 560 330"
+            role="img" aria-label="Runs: fraction of crawls right against
+            average slices per crawl"></svg>
+          <div class="key">
+            <span><i class="dot you"></i>your runs</span>
+            <span><i class="dot base"></i>taste every shop n times</span>
+            <span><i class="ln bar"></i>95% bar</span>
+            <span><i class="ln err"></i>&plusmn; 2 standard deviations</span>
+          </div>
+          <div id="chart-tip" class="chart-tip" hidden></div>
+        </section>
+      </div>
+    </div>
+
+    <section class="card wide" data-show="practice">
+      <div class="card-head">
+        <h2>Runs</h2>
+        <div class="buttons">
+          <button id="base-btn" disabled>Add baselines (this setup)</button>
+          <button id="clear-btn" class="quiet">Clear all</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="runs" class="runs">
+          <thead><tr>
+            <th>Estimator</th><th>Setup</th><th class="num">Crawls</th>
+            <th class="num">Right</th><th class="num">Avg slices</th>
+            <th class="num">Median</th><th class="num">90th pct</th>
+            <th>95%?</th><th class="num">Time</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="hint">Saved in this browser only. &ldquo;Right&rdquo; is
+        &plusmn; 2 standard deviations; <b>maybe</b> means that range
+        includes 95%, so run more crawls to tell.</p>
+    </section>
+
+    <section class="card wide" data-show="practice" id="replay-card">
+      <div class="card-head">
+        <h2>Replay one crawl</h2>
+        <div class="buttons replay-nav">
+          <button id="prev-wrong" disabled>&larr; Wrong</button>
+          <label class="crawl-no">Crawl
+            <input id="crawl-idx" type="number" min="0" value="0"></label>
+          <button id="next-wrong" disabled>Wrong &rarr;</button>
+        </div>
+      </div>
+      <div id="replay"><p class="muted">After a run, replay any of its
+        crawls with the hidden truth revealed.</p></div>
+    </section>
+
+    <!-- ----------------------------------------------------- leaderboard -->
+    <div class="panel board" data-show="board">
+      <section class="card">
+        <h2>Post your score</h2>
+        <p>Runs your <code>estimate</code> on 5000 fresh crawls of the
+          official setup (a new random seed each time) and posts how it did
+          under a name you choose. Posting again replaces your entry.</p>
+        <label class="field"><span>Name</span>
+          <input id="post-name" maxlength="40" placeholder="any name you
+            like"></label>
+        <label class="field"><span>Class code</span>
+          <input id="post-code" autocomplete="off" placeholder="from the
+            assignment"></label>
+        <div class="buttons">
+          <button id="post-btn" class="primary" disabled>Run and post</button>
+          <button id="post-stop" disabled>Stop</button>
+          <button id="remove-btn" class="quiet">Remove my entry</button>
+        </div>
+        <p id="post-msg" class="msg-line">&nbsp;</p>
+        <p class="hint">Your code is saved with your entry so the instructor
+          can re-run the top scores (a check mark means it was re-run). Only
+          the instructor can see it.</p>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Leaderboard</h2>
+          <button id="refresh-btn" class="quiet">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table id="board" class="runs">
+            <thead><tr>
+              <th class="num">#</th><th>Name</th><th class="num">Right</th>
+              <th class="num">Avg slices</th><th class="num">Median</th>
+              <th class="num">90th pct</th><th>Checked</th><th>Posted</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p id="board-msg" class="hint"></p>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <a href="https://github.com/matthigger/slice_crawl">Source on GitHub</a>
+    &middot;
+    <span id="build"></span>
+  </footer>
+
+  <script src="js/version.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/py.js"></script>
+  <script src="js/chart.js"></script>
+  <script src="js/replay.js"></script>
+  <script src="js/board.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
