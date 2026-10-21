@@ -223,20 +223,27 @@ def run(name, setup, progress=None, every=100):
 
     Returns:
         JSON {ok, error} plus, when ok: accuracy, accuracy_se, mean_slices,
-            median_slices, p90_slices, seconds, slices and correct (one
-            per crawl)
+            median_slices, p90_slices, seconds, and one entry per crawl in
+            each of: slices, correct, guess (shop named), best (true best
+            shop), gap (best minus second-best typical rating), shortfall
+            (best minus the named shop's typical rating)
     """
     setup = json.loads(setup)
     estimate = lookup(name)
     n_crawl, seed = setup['n_crawl'], setup['seed']
-    slices, correct = [], []
+    slices, correct, guesses, bests, gaps, shortfalls = [], [], [], [], [], []
     start = time.perf_counter()
     try:
         for idx in range(n_crawl):
             crawl = sample(setup, seed, idx)
             guess = call(estimate, crawl, idx)
+            top = sorted(crawl._mean, reverse=True)
             slices.append(crawl.n_taste)
             correct.append(guess == crawl._best)
+            guesses.append(guess)
+            bests.append(crawl._best)
+            gaps.append(top[0] - top[1])
+            shortfalls.append(top[0] - crawl._mean[guess])
             if progress is not None and (idx + 1) % every == 0:
                 progress(idx + 1, n_crawl, sum(correct), sum(slices))
     except RuntimeError as exc:
@@ -251,7 +258,8 @@ def run(name, setup, progress=None, every=100):
         median_slices=srt[n_crawl // 2],
         p90_slices=srt[min(n_crawl - 1, int(.9 * n_crawl))],
         seconds=time.perf_counter() - start,
-        slices=slices, correct=correct))
+        slices=slices, correct=correct, guess=guesses, best=bests, gap=gaps,
+        shortfall=shortfalls))
 
 
 def replay(name, setup, idx):

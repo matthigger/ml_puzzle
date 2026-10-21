@@ -122,25 +122,20 @@ estimate = Racer(z=2.5).estimate</pre></li>
           <tbody></tbody>
         </table>
       </div>
-      <p class="hint">Saved in this browser only. Click a row to replay it
-        and see its code, a name to rename it, a heading to sort.
+      <p class="hint">Saved in this browser only. Click a row for its
+        post-mortem and code, a name to rename it, a heading to sort.
         &ldquo;Right&rdquo; is &plusmn; 2 standard deviations; <b>maybe</b>
         means that range includes 95%, so run more crawls to tell.
         &ldquo;Add baselines&rdquo; runs the simplest estimators on the
         same crawls.</p>
     </section>
 
-    <section class="card wide" data-show="practice" id="replay-card">
+    <section class="card wide" data-show="practice" id="pm-card">
       <div class="card-head">
-        <h2>Replay one crawl</h2>
-        <div class="buttons replay-nav">
-          <button id="prev-wrong" disabled>&larr; Wrong</button>
-          <label class="crawl-no">Crawl
-            <input id="crawl-idx" type="number" min="0" value="0"></label>
-          <button id="next-wrong" disabled>Wrong &rarr;</button>
-        </div>
+        <h2>Post-mortem</h2>
+        <label class="check"><input type="checkbox" id="wrong-only">
+          wrong crawls only</label>
       </div>
-      <div id="run-info" class="run-info" hidden></div>
       <details id="run-code" class="run-code" open hidden>
         <summary>Code for this run</summary>
         <div id="code-files" class="chips"></div>
@@ -152,8 +147,15 @@ estimate = Racer(z=2.5).estimate</pre></li>
             Open in editor</button>
         </div>
       </details>
-      <div id="replay"><p class="muted">Click a run above to replay its
-        crawls with the hidden truth revealed.</p></div>
+      <p id="pm-msg" class="hint">Click a run above to go through its crawls
+        one by one, with the hidden truth revealed.</p>
+      <div class="table-wrap pm-table-wrap" id="pm-table-wrap" hidden>
+        <table id="crawls" class="runs sortable">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="pm-plot"></div>
     </section>
 
     <!-- ----------------------------------------------------- leaderboard -->
@@ -217,7 +219,7 @@ estimate = Racer(z=2.5).estimate</pre></li>
   <script src="js/version.js"></script>
   <script src="js/config.js"></script>
   <script src="js/py.js"></script>
-  <script src="js/replay.js"></script>
+  <script src="js/postmortem.js"></script>
   <script src="js/board.js"></script>
   <script src="js/app.js"></script>
 </body>

@@ -1,6 +1,6 @@
-// The page: editor and files, runs (each keeps its code; click one to replay
-// it and read its code), leaderboard posting, tabs. Python work goes
-// through Py (js/py.js).
+// The page: editor and files, runs (each keeps its code; click one for its
+// post-mortem and code), leaderboard posting, tabs. Python work goes through
+// Py (js/py.js).
 
 (function () {
   const $ = id => document.getElementById(id);
@@ -57,10 +57,11 @@ def estimate(crawl):
   let helpers = store.get("helpers", {});   // {filename: source}
   // run records: {id, name, estimator, baseline, code: {main, helpers} |
   // null, n_shop, family, race, n_crawl, seed, accuracy, accuracy_se,
-  // mean_slices, median_slices, p90_slices, seconds, when, wrong: [idx]}
+  // mean_slices, median_slices, p90_slices, seconds, when}
   let runs = store.get("runs", []);
   let selectedId = store.get("selected", null);
   let sort = store.get("sort", { col: "When", dir: -1 });
+  let pmSort = store.get("pmSort", { col: "Crawl", dir: 1 });
   let loaded = null;    // {source, helpers, names} the worker has run
   let busy = false;     // a load or run is in progress
   let mode = "practice";
@@ -93,8 +94,7 @@ def estimate(crawl):
     $("run-btn").disabled = !ready;
     $("base-btn").disabled = !ready;
     $("stop-btn").disabled = !busy;
-    updateReplayNav();
-    if (!busy) queueMicrotask(pumpReplay);
+    if (!busy) queueMicrotask(pumpPostMortem);
   }
 
   // ------------------------------------------------------- loading code
@@ -214,9 +214,13 @@ def estimate(crawl):
       mean_slices: res.mean_slices, median_slices: res.median_slices,
       p90_slices: res.p90_slices,
       seconds: (performance.now() - t0) / 1000, when: Date.now(),
-      wrong: res.correct.flatMap((c, i) => c ? [] : [i]),
     };
+    saveDetail(rec.id, detailOf(res));
     // a baseline replaces its older copy on the same crawls
+    for (const r of runs) {
+      if (baseline && r.baseline && r.name === name &&
+          r.n_crawl === rec.n_crawl && r.seed === rec.seed) removeDetail(r.id);
+    }
     runs = runs.filter(r => !(baseline && r.baseline && r.name === name &&
       r.n_crawl === rec.n_crawl && r.seed === rec.seed));
     runs.unshift(rec);
@@ -353,7 +357,7 @@ def estimate(crawl):
       const tr = tbody.insertRow();
       tr.className = "pick" + (r.baseline ? " baseline" : "") +
         (r.id === selectedId ? " selected" : "");
-      tr.title = "Replay this run and see its code";
+      tr.title = "Show this run's post-mortem and code";
       tr.onclick = e => { if (!e.target.closest("input, button")) select(r); };
       const add = (v, cls) => {
         const td = tr.insertCell();
@@ -388,6 +392,7 @@ def estimate(crawl):
       }
       const del = button("×", "Remove this run", () => {
         runs = runs.filter(x => x.id !== r.id);
+        removeDetail(r.id);
         store.set("runs", runs);
         if (r.id === selectedId) select(null);
         else renderRuns();
@@ -417,69 +422,90 @@ def estimate(crawl):
       r.name = inp.value.trim() || r.estimator;
       inp.value = r.name;
       store.set("runs", runs);
-      if (r.id === selectedId) renderRunInfo();
     };
     inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
     return inp;
   }
 
+  // ------------------------------------------------- per-crawl details
+  // a run's per-crawl results, for its post-mortem: {correct, slices, guess,
+  // best, gap, shortfall}, one entry per crawl. Kept in memory and, space
+  // allowing, in localStorage; when missing, rebuilt by re-running the run.
+  const details = new Map();
+  const detailKey = id => "slice_crawl.detail." + id;
+  const round3 = v => Math.round(v * 1000) / 1000;
+
+  function detailOf(res) {
+    return { correct: res.correct, slices: res.slices, guess: res.guess,
+             best: res.best, gap: res.gap, shortfall: res.shortfall };
+  }
+
+  function saveDetail(id, d) {
+    details.set(id, d);
+    const packed = JSON.stringify({ c: d.correct.map(Number).join(""),
+      s: d.slices, g: d.guess, b: d.best, gap: d.gap.map(round3),
+      sf: d.shortfall.map(round3) });
+    // full: drop the oldest runs' details (they rebuild when opened)
+    const old = [...runs].sort((a, b) => a.when - b.when).map(r => r.id)
+      .filter(x => x !== id);
+    for (;;) {
+      try { localStorage.setItem(detailKey(id), packed); return; }
+      catch (e) {
+        const x = old.shift();
+        if (x === undefined) return;
+        try { localStorage.removeItem(detailKey(x)); } catch (e2) { return; }
+      }
+    }
+  }
+
+  function getDetail(id) {
+    if (details.has(id)) return details.get(id);
+    try {
+      const p = JSON.parse(localStorage.getItem(detailKey(id)));
+      if (!p) return null;
+      const d = { correct: [...p.c].map(ch => ch === "1"), slices: p.s,
+                  guess: p.g, best: p.b, gap: p.gap, shortfall: p.sf };
+      details.set(id, d);
+      return d;
+    } catch (e) { return null; }
+  }
+
+  function removeDetail(id) {
+    details.delete(id);
+    try { localStorage.removeItem(detailKey(id)); } catch (e) { /* fine */ }
+  }
+
   // ------------------------------------------------- the selected run
-  // selects run r (or none): highlights its row, describes it and shows its
-  // code above the replay, replays its first wrong crawl
+  // selects run r (or none): highlights its row, shows its code and its
+  // post-mortem, opening on its first wrong crawl
   function select(r, scroll = true) {
     selectedId = r ? r.id : null;
     store.set("selected", selectedId);
     renderRuns();
-    renderRunInfo();
+    renderCode();
+    pmRows = {};
+    pmFor = null;
+    $("pm-table-wrap").hidden = true;
+    $("pm-plot").replaceChildren();
     if (!r) {
-      $("replay").innerHTML = '<p class="muted">Click a run above to replay ' +
-        "its crawls with the hidden truth revealed.</p>";
+      pmMsg("Click a run above to go through its crawls one by one, with " +
+            "the hidden truth revealed.");
       return;
     }
-    replay(r.wrong && r.wrong.length ? r.wrong[0] : 0);
-    if (scroll) $("replay-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!codeOf(r)) {
+      pmMsg("This run was saved before runs kept their code, so it has no " +
+            "post-mortem: run it again.");
+      return;
+    }
+    pmMsg("Loading...");
+    showCrawl(null);
+    if (scroll) $("pm-card").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function renderRunInfo() {
+  function renderCode() {
     const r = selected(), code = r && codeOf(r);
-    $("run-info").hidden = !r;
     $("run-code").hidden = !code;
-    updateReplayNav();
-    if (!r) return;
-
-    const host = $("run-info");
-    host.replaceChildren();
-    const title = document.createElement("div");
-    title.className = "run-title";
-    title.appendChild(Object.assign(document.createElement("b"),
-      { textContent: r.name }));
-    if (r.baseline) title.append(" (built-in baseline)");
-    else if (r.name !== r.estimator) {
-      title.append(" runs ");
-      title.appendChild(Object.assign(document.createElement("code"),
-        { textContent: r.estimator + "(crawl)" }));
-    }
-    const [v, cls] = verdict(r);
-    title.append(" ", Object.assign(document.createElement("span"), {
-      className: "badge " + cls,
-      textContent: { yes: "clears 95%", no: "below 95%", maybe: "maybe 95%" }[v],
-    }));
-    const stats = document.createElement("div");
-    stats.className = "muted";
-    stats.textContent = `${r.n_crawl} crawls, seed ${r.seed}: ` +
-      `${pct(r.accuracy)} ± ${(200 * r.accuracy_se).toFixed(1)} right, ` +
-      `${r.mean_slices.toFixed(1)} slices on average (median ` +
-      `${r.median_slices}, 90th pct ${r.p90_slices}). Ran ${stamp(r.when)}.`;
-    host.append(title, stats);
-    if (!code) {
-      host.appendChild(Object.assign(document.createElement("div"), {
-        className: "muted",
-        textContent: "This run was saved before runs kept their code, so " +
-          "it can't be replayed: run it again." }));
-      $("replay").replaceChildren();
-      return;
-    }
-    showCodeFile("main");
+    if (code) showCodeFile("main");
   }
 
   // the code panel: one file at a time (the main code, then its helpers)
@@ -549,74 +575,116 @@ def estimate(crawl):
     editor.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  // ------------------------------------------------------------- replay
-  function updateReplayNav() {
-    const r = selected();
-    const ok = !!r && !!codeOf(r) && !busy && Py.ready;
-    const anyWrong = ok && !!(r.wrong && r.wrong.length);
-    $("prev-wrong").disabled = !anyWrong;
-    $("next-wrong").disabled = !anyWrong;
-    $("crawl-idx").disabled = !ok;
-    if (r) $("crawl-idx").max = r.n_crawl - 1;
+  // --------------------------------------------------------- post-mortem
+  const pmMsg = text => { $("pm-msg").textContent = text; };
+  let pmRows = {};      // crawl idx -> its row in the crawls table
+  let pmFor = null;     // what the crawls table shows: "id|sort|filter"
+  let pmCrawl = null;   // the crawl plotted
+
+  const setupOf = r => ({ n_shop: r.n_shop, family: r.family, race: r.race,
+                          n_crawl: r.n_crawl, seed: r.seed });
+
+  // the crawls table for run r: rebuilt only when the run, sort or filter
+  // changes
+  function renderCrawls(r, d) {
+    const wrongOnly = $("wrong-only").checked;
+    const key = `${r.id}|${pmSort.col}|${pmSort.dir}|${wrongOnly}`;
+    const nWrong = d.correct.filter(c => !c).length;
+    pmMsg(`${nWrong} of ${r.n_crawl} crawls wrong. Click a crawl to see it; ` +
+          "hover a heading for what it means.");
+    if (key === pmFor) return;
+    pmFor = key;
+    const crawls = [];
+    for (let i = 0; i < r.n_crawl; i++) {
+      if (wrongOnly && d.correct[i]) continue;
+      crawls.push({ idx: i, correct: d.correct[i], guess: d.guess[i],
+                    best: d.best[i], slices: d.slices[i], gap: d.gap[i],
+                    shortfall: d.shortfall[i] });
+    }
+    $("pm-table-wrap").hidden = false;
+    pmRows = PostMortem.table($("crawls"), crawls, {
+      sort: pmSort,
+      onSort: col => {
+        pmSort = pmSort.col === col ? { col, dir: -pmSort.dir } : { col, dir: 1 };
+        store.set("pmSort", pmSort);
+        renderCrawls(r, d);
+        PostMortem.mark(pmRows, pmCrawl);
+      },
+      onPick: idx => { PostMortem.mark(pmRows, idx); showCrawl(idx); },
+    });
   }
 
-  // the latest replay asked for runs once the worker is free; older asks
-  // are dropped
+  // what the post-mortem should show once the worker is free: the selected
+  // run, and a crawl of it (null: its first wrong one). Older asks are
+  // dropped.
   let wanted = null, pumping = false;
-  function replay(idx) {
+  function showCrawl(idx) {
     const r = selected();
     if (!r || !codeOf(r)) return;
-    idx = Math.min(Math.max(0, idx), r.n_crawl - 1);
-    $("crawl-idx").value = idx;
     wanted = { r, idx };
-    pumpReplay();
+    pumpPostMortem();
   }
 
-  async function pumpReplay() {
+  async function pumpPostMortem() {
     if (pumping) return;
     pumping = true;
     try {
       while (wanted && Py.ready && !busy) {
         const { r, idx } = wanted;
         wanted = null;
-        await replayNow(r, idx);
+        await postMortemNow(r, idx);
       }
     } finally {
       pumping = false;
     }
   }
 
-  async function replayNow(r, idx) {
+  const stale = r => selected() !== r || wanted !== null;
+
+  async function postMortemNow(r, idx) {
     if (!(await ensureRunLoaded(r))) {
-      $("replay").textContent = "This run's code no longer loads here.";
+      pmMsg("This run's code no longer loads here.");
       return;
     }
-    const setup = { n_shop: r.n_shop, family: r.family, race: r.race,
-                    n_crawl: r.n_crawl, seed: r.seed };
+    let d = getDetail(r.id);
+    if (!d) {
+      setBusy(true);
+      let res;
+      try {
+        res = await Py.call("run", { name: r.estimator, setup: setupOf(r),
+          every: Math.max(10, Math.round(r.n_crawl / 100)) },
+          (done, n) => pmMsg(`Rebuilding this run's crawls: ${done} of ${n}...`));
+      } catch (e) {
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+      if (!res.ok) { pmMsg(res.error); return; }
+      d = detailOf(res);
+      saveDetail(r.id, d);
+    }
+    if (selected() !== r) return;
+    if (idx === null) {
+      const w = d.correct.indexOf(false);
+      idx = w >= 0 ? w : 0;
+    }
+    renderCrawls(r, d);
+    pmCrawl = idx;
+    PostMortem.mark(pmRows, idx);
+    if (stale(r)) return;
+
     setBusy(true);
     let res;
     try {
-      res = await Py.call("replay", { name: r.estimator, setup, idx });
+      res = await Py.call("replay", { name: r.estimator, setup: setupOf(r), idx });
     } catch (e) {
       setBusy(false);
       return;
     }
     setBusy(false);
-    // another run was picked meanwhile: its own replay is on the way
-    if (selected() !== r) return;
-    if (!res.ok) {
-      $("replay").textContent = res.error;
-      return;
-    }
-    Replay.render($("replay"), res, idx);
-  }
-
-  function stepWrong(dir) {
-    const r = selected();
-    if (!r || !r.wrong || !r.wrong.length) return;
-    const i = parseInt($("crawl-idx").value) || 0, w = r.wrong;
-    replay(dir > 0 ? (w.find(k => k > i) ?? w[0])
-                   : (w.findLast(k => k < i) ?? w[w.length - 1]));
+    if (stale(r)) return;
+    if (!res.ok) { $("pm-plot").textContent = res.error; return; }
+    PostMortem.plot($("pm-plot"), res, idx);
   }
 
   // -------------------------------------------------------- leaderboard
@@ -742,9 +810,7 @@ def estimate(crawl):
     $("py-status").className = "pill " + state;
     setBusy(false);
     if (state === "ready") {
-      loadCode().then(() => {
-        if (selected()) replay(parseInt($("crawl-idx").value) || 0);
-      });
+      loadCode().then(() => { if (selected()) showCrawl(pmCrawl); });
     }
     if (state === "failed") {
       loadMsg("Python couldn't start in this browser. Try reloading the " +
@@ -799,14 +865,19 @@ def estimate(crawl):
   $("base-btn").onclick = baselinesClicked;
   $("clear-btn").onclick = () => {
     if (!runs.length || !confirm("Clear every run in the table?")) return;
+    for (const r of runs) removeDetail(r.id);
     runs = [];
     store.set("runs", runs);
     select(null);
   };
-  $("crawl-idx").addEventListener("change", () =>
-    replay(parseInt($("crawl-idx").value) || 0));
-  $("prev-wrong").onclick = () => stepWrong(-1);
-  $("next-wrong").onclick = () => stepWrong(1);
+  $("wrong-only").checked = store.get("wrongOnly", false);
+  $("wrong-only").onchange = () => {
+    store.set("wrongOnly", $("wrong-only").checked);
+    const r = selected(), d = r && getDetail(r.id);
+    if (!d) return;
+    renderCrawls(r, d);
+    PostMortem.mark(pmRows, pmCrawl);
+  };
   $("copy-code").onclick = copyCode;
   $("download-code").onclick = downloadCode;
   $("open-code").onclick = openInEditor;
@@ -859,7 +930,7 @@ def estimate(crawl):
   renderHelpers();
   renderHead();
   renderRuns();
-  renderRunInfo();
+  select(selected(), false);
   setMode(Object.keys(HASH).find(m => HASH[m] === location.hash) || "practice");
   Py.start();
 })();
