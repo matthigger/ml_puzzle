@@ -1,7 +1,8 @@
 // Web worker: Python (Pyodide) runs here, so a slow or endless estimator
 // never freezes the page; Stop terminates this worker and starts a new one.
 //
-// Messages in:  { id, cmd, args }, cmd one of load / run / replay / notebook
+// Messages in:  { id, cmd, args }, cmd one of load / run / replay /
+//               notebook / unzip
 // Messages out: { id, result } (a JSON string from py/runner.py, or text),
 //               { id, error }, { id, progress: [done, n, right, slices] },
 //               { ready: true } once Python is up, { fatal } if it failed.
@@ -43,6 +44,8 @@ async function handle({ id, cmd, args }) {
     let result;
     if (cmd === "notebook") {
       result = runner.notebook_source(args.text);
+    } else if (cmd === "unzip") {
+      result = runner.unzip(args.bytes);
     } else if (cmd === "load") {
       // numpy, scipy, matplotlib, ...: fetched the first time they're used
       const all = [args.source, ...Object.values(args.helpers)].join("\n");

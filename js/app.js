@@ -1,5 +1,5 @@
-// The page: editor and files, runs (each keeps its code; click one for its
-// post-mortem and code), leaderboard posting, tabs. Python work goes through
+// The page: your code (typed, or dropped files), runs (each keeps its code;
+// click one for its post-mortem and code), leaderboard posting, tabs. Python work goes through
 // Py (js/py.js).
 
 (function () {
@@ -54,8 +54,14 @@ def estimate(crawl):
   // ------------------------------------------------------------ state
   const editor = $("code");
   editor.value = store.get("code", EXAMPLE);
-  let helpers = store.get("helpers", {});   // {filename: source}
-  // run records: {id, name, estimator, baseline, code: {main, helpers} |
+  // where the program comes from: "type" (the editor) or "files" (dropped
+  // .py / .ipynb files, notebooks kept as their code cells)
+  let srcMode = store.get("srcMode", "type");
+  let files = store.get("files", {});       // {path: source}
+  let mainFile = store.get("mainFile", null);
+  let shownUpload = null;                   // the file shown in files mode
+  // run records: {id, name, estimator, baseline, code: {main, helpers,
+  // mainName?} |
   // null, n_shop, family, race, n_crawl, seed, accuracy, accuracy_se,
   // mean_slices, median_slices, p90_slices, seconds, when}
   let runs = store.get("runs", []);
@@ -66,13 +72,48 @@ def estimate(crawl):
   let busy = false;     // a load or run is in progress
   let mode = "practice";
 
-  const helperKey = () => JSON.stringify(helpers);
-  const dirty = () => !loaded || loaded.source !== editor.value ||
-    loaded.helpers !== helperKey();
+  // the file that defines estimate: the one picked, the only notebook, or
+  // the first file that defines estimate
+  function pickMain() {
+    const names = Object.keys(files).sort();
+    if (mainFile && files[mainFile] !== undefined) return mainFile;
+    const nbs = names.filter(f => f.endsWith(".ipynb"));
+    if (nbs.length === 1) return nbs[0];
+    return names.find(f => /^(def estimate\b|estimate\s*=)/m.test(files[f])) ||
+      nbs[0] || names[0] || null;
+  }
+
+  // the program to load and run: {main, helpers, mainName?}; helpers are
+  // the other .py files, paths relative to the main file's folder
+  function program() {
+    if (srcMode === "type") return { main: editor.value, helpers: {} };
+    const main = pickMain();
+    if (!main) return { main: "", helpers: {} };
+    const dir = main.includes("/") ? main.slice(0, main.lastIndexOf("/") + 1) : "";
+    const helpers = {};
+    for (const [f, text] of Object.entries(files)) {
+      if (f === main || !f.endsWith(".py")) continue;
+      helpers[dir && f.startsWith(dir) ? f.slice(dir.length) : f] = text;
+    }
+    return { main: files[main], helpers, mainName: main };
+  }
+
+  const dirty = () => {
+    const p = program();
+    return !loaded || loaded.source !== p.main ||
+      loaded.helpers !== JSON.stringify(p.helpers);
+  };
   const selected = () => runs.find(r => r.id === selectedId) || null;
   const codeOf = r => r.baseline ? baselineCode(r.name) : r.code;
 
   // ------------------------------------------------------- messages
+  // the code's status, not Python's: green only when the program loaded
+  // as it stands now
+  function codeStatus(kind, text) {
+    $("py-status").textContent = text;
+    $("py-status").className = "pill " + kind;
+  }
+
   function loadMsg(text, kind) {
     const el = $("load-msg");
     el.hidden = !text;
@@ -124,11 +165,19 @@ def estimate(crawl):
 
   async function loadEditor() {
     if (!Py.ready) return false;
-    loadMsg("Running your code...");
+    const p = program();
+    if (!p.main.trim()) {
+      codeStatus("", "No code yet");
+      loadMsg(srcMode === "files" ? "Drop your files first." : "", "note");
+      return false;
+    }
+    loadMsg("");
+    codeStatus("", "Checking your code...");
     let res;
     try {
-      res = await loadInWorker(editor.value, { ...helpers });
+      res = await loadInWorker(p.main, p.helpers);
     } catch (e) {
+      codeStatus("failed", "Not loaded");
       loadMsg(e.message === "stopped" ? "Stopped while loading." : e.message,
               "error");
       return false;
@@ -143,11 +192,19 @@ def estimate(crawl):
     $("output").textContent = res.output;
     $("output-box").hidden = !res.output;
 
-    if (!res.ok) loadMsg(res.error, "error");
-    else if (!res.names.length) {
+    if (!res.ok) {
+      codeStatus("failed", "Error");
+      loadMsg(res.error, "error");
+    } else if (!res.names.length) {
+      codeStatus("failed", "No estimator");
       loadMsg("No function that takes a crawl was found: define " +
               "estimate(crawl).", "error");
-    } else loadMsg("");
+    } else {
+      const k = res.names.length;
+      codeStatus("ready", `Loaded: ${k} estimator${k > 1 ? "s" : ""}`);
+      loadMsg("");
+    }
+    if (dirty()) codeStatus("", "Edited");
     return res.ok && res.names.length > 0;
   }
 
@@ -242,7 +299,9 @@ def estimate(crawl):
     if (!(await ensureLoaded())) { runMsg("Fix your code first.", "error"); return; }
     const name = $("estimator").value;
     const label = $("run-name").value.trim() || name;
+    const p = program();
     const code = { main: loaded.source, helpers: JSON.parse(loaded.helpers) };
+    if (p.mainName) code.mainName = p.mainName;
     setBusy(true);
     runMsg("Running...");
     const rec = await runOne(name, setup,
@@ -490,6 +549,8 @@ def estimate(crawl):
     pmFor = null;
     pmShown = null;
     $("pm-table-wrap").hidden = true;
+    $("wrong-only-box").hidden = true;
+    $("all-shops-box").hidden = true;
     $("pm-plot").replaceChildren();
     if (!r) {
       pmMsg("Click a run above to go through its crawls one by one, with " +
@@ -517,12 +578,12 @@ def estimate(crawl):
   function showCodeFile(file) {
     const code = codeOf(selected());
     shownFile = file;
-    const files = [["main", "main code"],
-                   ...Object.keys(code.helpers).map(f => [f, f])];
+    const list = [["main", code.mainName || "main code"],
+                  ...Object.keys(code.helpers).map(f => [f, f])];
     const chips = $("code-files");
     chips.replaceChildren();
-    chips.hidden = files.length < 2;
-    for (const [f, label] of files) {
+    chips.hidden = list.length < 2;
+    for (const [f, label] of list) {
       const c = button(label, "Show " + label, () => showCodeFile(f));
       c.className = "chip file" + (f === file ? " on" : "");
       chips.appendChild(c);
@@ -553,30 +614,44 @@ def estimate(crawl):
     const slug = r.name.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([shownText()], { type: "text/x-python" }));
-    a.download = shownFile === "main" ? (slug || "estimate") + ".py" : shownFile;
+    const code = codeOf(r);
+    a.download = shownFile !== "main" ? shownFile.split("/").pop()
+      : code.mainName ? code.mainName.split("/").pop().replace(/\.ipynb$/, ".py")
+      : (slug || "estimate") + ".py";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // makes run r's code yours: in the editor if it's one file, else as files
   async function openInEditor() {
     const r = selected(), code = codeOf(r);
     if (busy) return;
-    const same = editor.value === code.main &&
-      helperKey() === JSON.stringify(code.helpers);
-    if (!same && !confirm(`Replace the editor's code and helper files with ` +
-                          `the code of "${r.name}"?`)) return;
-    editor.value = code.main;
-    helpers = { ...code.helpers };
-    store.set("code", editor.value);
-    store.set("helpers", helpers);
-    renderHelpers();
+    const asFiles = !!code.mainName || Object.keys(code.helpers).length > 0;
+    const cur = program();
+    const same = cur.main === code.main &&
+      JSON.stringify(cur.helpers) === JSON.stringify(code.helpers);
+    if (!same && !confirm(`Replace your ${srcMode === "files" ? "files" : "code"}` +
+                          ` with the code of "${r.name}"?`)) return;
+    if (asFiles) {
+      const main = code.mainName || "main.py";
+      const dir = main.includes("/") ? main.slice(0, main.lastIndexOf("/") + 1) : "";
+      files = { [main]: code.main };
+      for (const [f, text] of Object.entries(code.helpers)) files[dir + f] = text;
+      mainFile = main;
+      shownUpload = main;
+      saveFiles();
+    } else {
+      editor.value = code.main;
+      store.set("code", editor.value);
+    }
+    setSrcMode(asFiles ? "files" : "type", false);
     $("run-name").value = r.baseline || r.name === r.estimator ? "" : r.name;
     await loadCode();
     const sel = $("estimator");
     if ([...sel.options].some(o => o.value === r.estimator)) {
       sel.value = r.estimator;
     }
-    editor.scrollIntoView({ behavior: "smooth", block: "center" });
+    $("code-card").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   // --------------------------------------------------------- post-mortem
@@ -595,8 +670,7 @@ def estimate(crawl):
     const wrongOnly = $("wrong-only").checked;
     const key = `${r.id}|${pmSort.col}|${pmSort.dir}|${wrongOnly}`;
     const nWrong = d.correct.filter(c => !c).length;
-    pmMsg(`${nWrong} of ${r.n_crawl} crawls wrong. Click a crawl to see it; ` +
-          "hover a heading for what it means.");
+    pmMsg(`${nWrong} of ${r.n_crawl} crawls wrong. Click one to see it.`);
     if (key === pmFor) return;
     pmFor = key;
     const crawls = [];
@@ -607,6 +681,7 @@ def estimate(crawl):
                     shortfall: d.shortfall[i], observed: d.observed[i] });
     }
     $("pm-table-wrap").hidden = false;
+    $("wrong-only-box").hidden = false;
     pmRows = PostMortem.table($("crawls"), crawls, {
       sort: pmSort,
       onSort: col => {
@@ -690,6 +765,7 @@ def estimate(crawl):
     if (stale(r)) return;
     if (!res.ok) { $("pm-plot").textContent = res.error; return; }
     pmShown = { res, idx };
+    $("all-shops-box").hidden = false;
     PostMortem.plot($("pm-plot"), res, idx, $("all-shops").checked);
   }
 
@@ -771,49 +847,97 @@ def estimate(crawl):
     });
   }
 
-  async function openFile(file) {
-    let text = await readText(file);
-    if (file.name.endsWith(".ipynb")) {
+  function readBytes(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(new Uint8Array(r.result));
+      r.onerror = () => reject(r.error);
+      r.readAsArrayBuffer(file);
+    });
+  }
+
+  // ----------------------------------------------------- where code comes
+  function setSrcMode(m, reload = true) {
+    srcMode = m;
+    store.set("srcMode", m);
+    for (const b of $("src-mode").querySelectorAll("button")) {
+      b.setAttribute("aria-checked", b.dataset.v === m);
+    }
+    $("type-pane").hidden = m !== "type";
+    $("files-pane").hidden = m !== "files";
+    renderFiles();
+    if (reload) loadCode();
+  }
+
+  function saveFiles() {
+    store.set("files", files);
+    store.set("mainFile", mainFile);
+  }
+
+  // adds dropped / chosen files: .py as they are, .ipynb as their code
+  // cells, a .zip's code files; same paths replace the old ones
+  async function addFiles(list) {
+    const added = [], skipped = [];
+    loadMsg("Reading your files...", "note");
+    for (const f of list) {
       try {
-        text = await Py.call("notebook", { text }, null, true);
+        if (f.name.endsWith(".zip")) {
+          const res = await Py.call("unzip", { bytes: await readBytes(f) });
+          Object.assign(files, res.files);
+          added.push(...Object.keys(res.files));
+          skipped.push(...res.skipped.map(x => `${x} (in ${f.name})`));
+        } else if (f.name.endsWith(".ipynb")) {
+          files[f.name] = await Py.call("notebook", { text: await readText(f) },
+                                        null, true);
+          added.push(f.name);
+        } else if (f.name.endsWith(".py")) {
+          files[f.name] = await readText(f);
+          added.push(f.name);
+        } else {
+          skipped.push(f.name);
+        }
       } catch (e) {
-        loadMsg(`Couldn't read ${file.name} as a notebook: ${e.message}`, "error");
-        return;
+        skipped.push(`${f.name} (couldn't read it: ${e.message})`);
       }
     }
-    editor.value = text;
-    store.set("code", text);
-    await loadCode();
-    if ($("load-msg").hidden) {
-      loadMsg(file.name.endsWith(".ipynb")
-        ? `Opened ${file.name}: its code cells are in the editor.`
-        : `Opened ${file.name}.`, "note");
+    if (added.length) shownUpload = pickMain();
+    saveFiles();
+    renderFiles();
+    const ok = await loadCode();
+    if (skipped.length && (ok || $("load-msg").hidden)) {
+      loadMsg("Only .py and .ipynb files are used; skipped: " +
+              skipped.join(", "), "note");
     }
   }
 
-  function renderHelpers() {
-    const host = $("helpers");
-    host.replaceChildren();
-    for (const name of Object.keys(helpers)) {
-      const chip = document.createElement("span");
-      chip.className = "chip";
-      chip.textContent = name + " ";
-      const x = button("×", "Remove " + name, () => {
-        delete helpers[name];
-        store.set("helpers", helpers);
-        renderHelpers();
-        loadCode();
+  function renderFiles() {
+    const names = Object.keys(files).sort();
+    $("files-box").hidden = !names.length;
+    $("drop").classList.toggle("small", names.length > 0);
+    if (!names.length) return;
+    const main = pickMain();
+    if (!files[shownUpload]) shownUpload = main;
+    const tabs = $("file-tabs");
+    tabs.replaceChildren();
+    for (const f of names) {
+      const b = button(f + (f === main ? "  (main)" : ""), "Show " + f, () => {
+        shownUpload = f;
+        renderFiles();
       });
-      x.className = "x";
-      chip.appendChild(x);
-      host.appendChild(chip);
+      b.className = "chip file" + (f === shownUpload ? " on" : "");
+      tabs.appendChild(b);
     }
+    $("file-view").textContent = files[shownUpload];
+    const sel = $("main-file");
+    sel.replaceChildren();
+    for (const f of names) sel.add(new Option(f, f));
+    sel.value = main;
+    $("main-field").hidden = names.length < 2;
   }
 
   // --------------------------------------------------------------- wiring
   Py.onStatus = (state, text) => {
-    $("py-status").textContent = text;
-    $("py-status").className = "pill " + state;
+    if (state !== "ready") codeStatus(state === "failed" ? "failed" : "", text);
     setBusy(false);
     if (state === "ready") {
       loadCode().then(() => { if (selected()) showCrawl(pmCrawl); });
@@ -831,7 +955,10 @@ def estimate(crawl):
     runMsg("Stopped.");
   }
 
-  editor.addEventListener("input", () => store.set("code", editor.value));
+  editor.addEventListener("input", () => {
+    store.set("code", editor.value);
+    if (Py.ready) codeStatus("", "Edited: checks when you click away or run");
+  });
   editor.addEventListener("change", () => { if (!busy) loadCode(); });
   editor.addEventListener("keydown", e => {
     if (e.key === "Tab" && !e.shiftKey) {
@@ -844,24 +971,52 @@ def estimate(crawl):
     }
   });
 
-  $("open-btn").onclick = () => $("open-file").click();
-  $("helper-btn").onclick = () => $("helper-file").click();
-  $("open-file").onchange = e => {
-    if (e.target.files[0]) openFile(e.target.files[0]);
+  for (const b of $("src-mode").querySelectorAll("button")) {
+    b.onclick = () => { if (b.dataset.v !== srcMode) setSrcMode(b.dataset.v); };
+  }
+  $("files-input").onchange = e => {
+    if (e.target.files.length) addFiles([...e.target.files]);
     e.target.value = "";
   };
-  $("helper-file").onchange = async e => {
-    for (const f of e.target.files) helpers[f.name] = await readText(f);
-    e.target.value = "";
-    store.set("helpers", helpers);
-    renderHelpers();
+  $("main-file").onchange = () => {
+    mainFile = $("main-file").value;
+    shownUpload = mainFile;
+    saveFiles();
+    renderFiles();
     loadCode();
   };
+  $("clear-files").onclick = () => {
+    if (!confirm("Remove all your files from this page? (Your own copies " +
+                 "are untouched.)")) return;
+    files = {};
+    mainFile = null;
+    saveFiles();
+    renderFiles();
+    loadCode();
+  };
+  // drop anywhere on the code card: switches to files
+  const card = $("code-card");
+  card.addEventListener("dragover", e => {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    card.classList.add("dragging");
+  });
+  card.addEventListener("dragleave", e => {
+    if (!card.contains(e.relatedTarget)) card.classList.remove("dragging");
+  });
+  card.addEventListener("drop", e => {
+    if (!e.dataTransfer.files.length) return;
+    e.preventDefault();
+    card.classList.remove("dragging");
+    if (srcMode !== "files") setSrcMode("files", false);
+    addFiles([...e.dataTransfer.files]);
+  });
   $("reset-btn").onclick = () => {
     if (editor.value !== EXAMPLE &&
         !confirm("Replace the editor's code with the example?")) return;
     editor.value = EXAMPLE;
     store.set("code", EXAMPLE);
+    if (Py.ready) codeStatus("", "Edited");
     loadCode();
   };
 
@@ -940,7 +1095,7 @@ def estimate(crawl):
     r.race = r.race ?? "official";
   }
   restoreForm();
-  renderHelpers();
+  setSrcMode(srcMode, false);
   renderHead();
   renderRuns();
   select(selected(), false);

@@ -200,6 +200,59 @@ input, select {
 }
 .field input, .field select { width: 100%; }
 
+.seg {
+  display: inline-flex;
+  border: 1px solid #cfd4dd;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-left: auto;
+}
+.seg button {
+  border: 0 !important;
+  border-radius: 0 !important;
+  font-size: .86rem !important;
+  padding: 4px 12px !important;
+}
+.seg button + button { border-left: 1px solid #cfd4dd !important; }
+.seg button[aria-checked="true"] {
+  background: var(--ink) !important;
+  color: #fff;
+}
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+  border: 2px dashed #c3cad6;
+  border-radius: 10px;
+  padding: 34px 16px;
+  color: var(--muted);
+  cursor: pointer;
+  background: #fbfbfd;
+}
+.drop b { color: var(--ink); }
+.drop span { font-size: .88rem; }
+.drop:hover { border-color: var(--accent); }
+.drop.small { padding: 10px 16px; }
+.drop.small span { display: none; }
+.code-card.dragging { outline: 3px dashed var(--accent); outline-offset: -6px; }
+.files-head { display: flex; align-items: center; gap: 8px;
+  justify-content: space-between; margin: 10px 0 0; }
+.file-view {
+  min-height: 160px;
+  max-height: 300px;
+  overflow: auto;
+  background: #f6f7fa;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 6px 0 0;
+  line-height: 1.45;
+  tab-size: 4;
+}
+
 .pill {
   font-size: .8rem;
   font-weight: 600;
@@ -370,11 +423,13 @@ button.chip.file.on { background: var(--ink); color: #fff;
 .badge.warn { background: #fef3c7; color: var(--warn); }
 
 /* -------------------------------------------------------- post-mortem */
-.checks { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.pm-bar { display: flex; align-items: center; justify-content: space-between;
+  gap: 4px 16px; flex-wrap: wrap; }
+.pm-bar .hint { margin: 0 !important; }
+.pm-bar + .pm-table-wrap { margin-top: 6px; }
 .ov { text-decoration: overline; }
-.runs th button.sort i, .pm-diffs i, .key i:not(.ln) { font-family: Georgia,
+.runs th button.sort i, .key i:not(.ln) { font-family: Georgia,
   "Times New Roman", serif; font-size: 1.08em; text-transform: none; }
-.pm-diffs { margin: 0 0 8px !important; font-variant-numeric: tabular-nums; }
 .check { display: inline-flex; align-items: center; gap: 6px;
   font-size: .92rem; color: var(--muted); cursor: pointer; }
 .pm-table-wrap {

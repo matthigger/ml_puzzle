@@ -34,12 +34,14 @@
     <details class="howto" open data-show="practice">
       <summary>How your code is run</summary>
       <ul>
-        <li>Paste your code, or open your <code>.py</code> or
-          <code>.ipynb</code>. A notebook's code cells run top to bottom;
-          lines starting with <code>!</code> or <code>%</code> are skipped,
-          and its own <code>evaluate()</code> calls run only 50 crawls, so
-          loading stays quick. Add any <code>.py</code> helper files it
-          imports.</li>
+        <li><b>Type it here</b> for one file of code, or <b>Use my
+          files</b> to drop the <code>.py</code> / <code>.ipynb</code> files
+          you work on elsewhere (or a <code>.zip</code>): the main file (the
+          one defining <code>estimate</code>) can import the others. A
+          notebook's code cells run top to bottom; lines starting with
+          <code>!</code> or <code>%</code> are skipped, and its own
+          <code>evaluate()</code> calls run only 50 crawls, so loading stays
+          quick.</li>
         <li>Every function that takes a crawl shows up in the
           <b>Estimator</b> menu, so you can compare a few in one go. Name a
           run to tell versions apart: each row keeps the code it ran.</li>
@@ -59,21 +61,41 @@ estimate = Racer(z=2.5).estimate</pre></li>
   <main>
     <!-- ------------------------------------------------------ practice -->
     <div class="panel code-panel" data-show="practice">
-      <section class="card code-card">
+      <section class="card code-card" id="code-card">
         <div class="card-head">
           <h2>Your code</h2>
+          <div class="seg" id="src-mode" role="radiogroup"
+            aria-label="Where your code comes from">
+            <button role="radio" data-v="type">Type it here</button>
+            <button role="radio" data-v="files">Use my files</button>
+          </div>
           <span id="py-status" class="pill">Starting Python...</span>
         </div>
-        <textarea id="code" spellcheck="false" autocomplete="off"
-          aria-label="Your code"></textarea>
-        <div class="buttons">
-          <button id="open-btn">Open .py / .ipynb</button>
-          <button id="helper-btn">Add helper .py</button>
-          <button id="reset-btn" class="quiet">Example</button>
-          <input id="open-file" type="file" accept=".py,.ipynb" hidden>
-          <input id="helper-file" type="file" accept=".py" multiple hidden>
+        <div id="type-pane">
+          <textarea id="code" spellcheck="false" autocomplete="off"
+            aria-label="Your code"></textarea>
+          <div class="buttons">
+            <button id="reset-btn" class="quiet">Example</button>
+          </div>
         </div>
-        <div id="helpers" class="chips"></div>
+        <div id="files-pane" hidden>
+          <label class="drop" id="drop">
+            <input id="files-input" type="file" multiple
+              accept=".py,.ipynb,.zip" hidden>
+            <b>Drop your .py / .ipynb files, or a .zip of them</b>
+            <span>or click to choose. Work in Jupyter or VS Code, then drop
+              the changed files again: same names replace the old ones.</span>
+          </label>
+          <div id="files-box" hidden>
+            <div class="files-head">
+              <div id="file-tabs" class="chips"></div>
+              <button id="clear-files" class="quiet">Remove all</button>
+            </div>
+            <pre id="file-view" class="file-view"></pre>
+            <label class="field" id="main-field"><span>Main file</span>
+              <select id="main-file"></select></label>
+          </div>
+        </div>
         <div id="load-msg" class="msg" hidden></div>
         <details id="output-box" class="output" hidden>
           <summary>Printed while loading</summary>
@@ -133,13 +155,6 @@ estimate = Racer(z=2.5).estimate</pre></li>
     <section class="card wide" data-show="practice" id="pm-card">
       <div class="card-head">
         <h2>Post-mortem</h2>
-        <div class="checks">
-          <label class="check"><input type="checkbox" id="wrong-only">
-            wrong crawls only</label>
-          <label class="check" title="Off: plot only the best shop and the
-            one you named (or, when you named the best, the runner-up)">
-            <input type="checkbox" id="all-shops"> show every shop</label>
-        </div>
       </div>
       <details id="run-code" class="run-code" open hidden>
         <summary>Code for this run</summary>
@@ -148,17 +163,27 @@ estimate = Racer(z=2.5).estimate</pre></li>
         <div class="buttons">
           <button id="copy-code">Copy</button>
           <button id="download-code">Download</button>
-          <button id="open-code" title="Replace the editor's code with this">
-            Open in editor</button>
+          <button id="open-code" title="Replace your code (typed or files)
+            with this run's">Use this code</button>
         </div>
       </details>
-      <p id="pm-msg" class="hint">Click a run above to go through its crawls
-        one by one, with the hidden truth revealed.</p>
+      <div class="pm-bar">
+        <p id="pm-msg" class="hint">Click a run above to go through its
+          crawls one by one, with the hidden truth revealed.</p>
+        <label class="check" id="wrong-only-box" hidden><input
+          type="checkbox" id="wrong-only"> wrong crawls only</label>
+      </div>
       <div class="table-wrap pm-table-wrap" id="pm-table-wrap" hidden>
         <table id="crawls" class="runs sortable">
           <thead><tr></tr></thead>
           <tbody></tbody>
         </table>
+      </div>
+      <div class="pm-bar" id="all-shops-box" hidden>
+        <span></span>
+        <label class="check" title="Off: only the best shop and your pick
+          (or the runner-up)"><input type="checkbox" id="all-shops"> show
+          every shop</label>
       </div>
       <div id="pm-plot"></div>
     </section>

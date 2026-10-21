@@ -1,7 +1,10 @@
 # slice_crawl
 
-Practice site for the DS4400 **Slice Crawl** puzzle. Students paste their
-code or open their `.py` / `.ipynb` (plus helper `.py` files), and the page
+Practice site for the DS4400 **Slice Crawl** puzzle. Students either type
+their code in the page ("Type it here") or drop the `.py` / `.ipynb` files
+they work on elsewhere, or a `.zip` of them ("Use my files": read-only
+tabs, the main file is the one defining `estimate`, it can import the
+others, same names replace on a re-drop), and the page
 runs their `estimate(crawl)` on as many random crawls as they like:
 
 - **Practice tab.** Pick an estimator (every top-level function that takes

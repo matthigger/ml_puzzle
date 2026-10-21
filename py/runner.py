@@ -4,6 +4,7 @@ The page's web worker (js/worker.js) loads this module into Pyodide next to
 slice_crawl.py, then calls:
 
     load(source, helpers)       run the student's code, list its estimators
+    unzip(data)                 the code files in an uploaded .zip
     run(name, setup, progress)  try one estimator on many crawls
     replay(name, setup, idx)    one crawl in detail, hidden truth revealed
 
@@ -22,6 +23,7 @@ import sys
 import time
 import traceback
 import types
+import zipfile
 
 import slice_crawl
 from slice_crawl import SliceCrawl, TooManySlices, check_guess
@@ -79,6 +81,39 @@ def notebook_source(text):
     return '\n'.join(source)
 
 
+def unzip(data):
+    """ the code files of an uploaded .zip
+
+    Args:
+        data (bytes, or a JS Uint8Array in the browser): the .zip
+
+    Returns:
+        JSON {files, skipped}: files is {path: source} of its .py files and
+            .ipynb files (as their code cells), paths relative to the zip's
+            single top folder when it has one; skipped lists everything else
+    """
+    if hasattr(data, 'to_py'):
+        data = data.to_py()
+    junk = ('__MACOSX', '__pycache__', '.ipynb_checkpoints')
+    with zipfile.ZipFile(io.BytesIO(bytes(data))) as zf:
+        names = [n for n in zf.namelist() if not n.endswith('/')
+                 and not any(j in n.split('/') for j in junk)
+                 and not os.path.basename(n).startswith('.')]
+        top = {n.split('/')[0] for n in names}
+        strip = len(top) == 1 and all('/' in n for n in names)
+        files, skipped = {}, []
+        for n in names:
+            rel = n.split('/', 1)[1] if strip else n
+            text = zf.read(n).decode('utf-8', 'replace')
+            if rel.endswith('.py'):
+                files[rel] = text
+            elif rel.endswith('.ipynb'):
+                files[rel] = notebook_source(text)
+            else:
+                skipped.append(rel)
+    return json.dumps(dict(files=files, skipped=skipped))
+
+
 def user_error(exc, filename):
     """ the error message, with traceback lines from the student's code only
     (not this file's or the site's) """
@@ -119,7 +154,8 @@ def load(source, helpers):
 
     Args:
         source (str): the main code (a .py, or a .ipynb's code cells)
-        helpers (str): JSON {filename: source} of helper .py files
+        helpers (str): JSON {path: source} of the other files, paths
+            relative to the main file's folder (e.g. utils.py, lib/race.py)
 
     Returns:
         JSON {ok, names, output, error}: names are the estimators found,
@@ -136,7 +172,12 @@ def load(source, helpers):
     shutil.rmtree(USER_DIR, ignore_errors=True)
     os.makedirs(USER_DIR)
     for name, text in helpers.items():
-        with open(os.path.join(USER_DIR, os.path.basename(name)), 'w') as f:
+        rel = os.path.normpath(name)
+        if os.path.isabs(rel) or rel.startswith('..'):
+            continue
+        path = os.path.join(USER_DIR, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
             f.write(text)
     if USER_DIR not in sys.path:
         sys.path.insert(0, USER_DIR)
