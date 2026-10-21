@@ -107,6 +107,7 @@ create index if not exists entries_pending
 
 create or replace function private.token_hash(token text) returns text
 language sql immutable
+set search_path = ''
 as $$ select encode(sha256(convert_to(coalesce(token, ''), 'UTF8')), 'hex') $$;
 
 -- a new board for project, with a fresh random code (returned), e.g.
@@ -115,6 +116,7 @@ as $$ select encode(sha256(convert_to(coalesce(token, ''), 'UTF8')), 'hex') $$;
 create or replace function private.new_board(project text, title text)
 returns text
 language plpgsql
+set search_path = ''
 as $$
 declare
   abc text := 'abcdefghjkmnpqrstuvwxyz023456789';
@@ -140,6 +142,7 @@ $$;
 create or replace function private.board_for(project text, code text)
 returns private.boards
 language plpgsql stable
+set search_path = ''
 as $$
 declare
   b private.boards;
