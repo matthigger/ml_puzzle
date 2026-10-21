@@ -48,6 +48,11 @@ N_QUAKE = 2000
 # wall-clock limit for one entry's whole re-run
 TIMEOUT_SEC = 15 * 60
 
+# the workflow's job is killed at 120 minutes: an entry starts only if
+# it can finish inside this, so none is cut off and left waiting (first
+# in line again, every run)
+BUDGET_SEC = 100 * 60
+
 # longest protocol line accepted: an estimate is a few numbers, the load
 # reply carries at most an error message
 MAX_LINE = 1 << 16
@@ -84,10 +89,18 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
     if seed is None:
         seed = secrets.randbits(63)
     start = time.monotonic()
-    proc = subprocess.Popen(DOCKER + [image], stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE,
+    name = 'verify-' + secrets.token_hex(8)
+    proc = subprocess.Popen(DOCKER + ['--name', name, image],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True)
-    timer = threading.Timer(timeout, proc.kill)
+    # killing the docker client leaves its container running: kill that
+    # by name
+    def kill():
+        subprocess.run(['docker', 'kill', name], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        proc.kill()
+
+    timer = threading.Timer(timeout, kill)
     timer.start()
 
     def send(obj):
@@ -141,7 +154,7 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         raise Failed(f'the re-run broke down ({type(exc).__name__})')
     finally:
         timer.cancel()
-        proc.kill()
+        kill()
         proc.wait()
 
     err = np.array(err_km)
@@ -186,7 +199,11 @@ def rerun_waiting():
     score (or why it failed)."""
     entries = rpc('pending_entries', {'project': PROJECT})
     print(f'{len(entries)} waiting')
+    start = time.monotonic()
     for e in entries:
+        if time.monotonic() - start + TIMEOUT_SEC > BUDGET_SEC:
+            print('out of time: the rest wait for the next run')
+            break
         # any failure marks this entry failed, so a bad one can't stay
         # pending and stop every later run
         try:
