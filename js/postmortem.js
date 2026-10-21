@@ -3,11 +3,18 @@
 //
 //   PostMortem.table(table, crawls, opts)  -> {idx: tr} of the rows drawn
 //   PostMortem.mark(rows, idx)             highlight crawl idx's row
-//   PostMortem.plot(host, result, idx)     result: runner.replay()'s output
+//   PostMortem.plot(host, result, idx, all) result: runner.replay()'s output;
+//                                          all: every shop, or only the best
+//                                          and the named (or runner-up)
 //
 // The plot has a strip per shop, best typical rating first: the shop's true
 // bell curve (dashed at its typical rating), and every slice tasted there as
 // a little pizza slice, stacked into columns by rating.
+//
+// Notation, the same in the table, the plot and their hover text: x, x-hat
+// and x' are a slice's rating at the best shop, the shop named and the
+// runner-up; E[.] is a shop's typical (expected) rating, the hidden truth;
+// a bar is the average of the slices tasted there.
 
 const PostMortem = (function () {
   const NS = "http://www.w3.org/2000/svg";
@@ -18,6 +25,17 @@ const PostMortem = (function () {
     if (parent) parent.appendChild(e);
     return e;
   }
+
+  // the notation, as HTML: the bar is CSS (overline), the hat a combining
+  // circumflex
+  const N = {
+    x: "<i>x</i>", xhat: "<i>x̂</i>", x2: "<i>x</i>′",
+    xbar: '<i class="ov">x</i>', xhatbar: '<i class="ov">x̂</i>',
+  };
+  const EXPECTED = `E[${N.x}] − E[${N.xhat}]`;
+  const OBSERVED = `${N.xbar} − ${N.xhatbar}`;
+  const GAP = `E[${N.x}] − E[${N.x2}]`;
+  const fmt = v => (v < 0 ? "−" : "") + Math.abs(v).toFixed(2);
 
   function badge(label, cls) {
     const b = document.createElement("span");
@@ -35,13 +53,26 @@ const PostMortem = (function () {
     { label: "Named", key: c => c.guess, text: c => `shop ${c.guess}` },
     { label: "Best", key: c => c.best, text: c => `shop ${c.best}` },
     { label: "Slices", num: true, key: c => c.slices, text: c => c.slices },
-    { label: "Top-two gap", num: true, key: c => c.gap,
-      text: c => c.gap.toFixed(2),
-      help: "The best shop's typical rating minus the second best's: " +
-            "small means a close race" },
-    { label: "Shortfall", num: true, key: c => c.shortfall,
-      text: c => c.correct ? "" : c.shortfall.toFixed(2),
-      help: "The best shop's typical rating minus that of the shop named" },
+    { label: "Expected", html: EXPECTED, num: true, key: c => c.shortfall,
+      text: c => c.correct ? "" : fmt(c.shortfall),
+      help: "Expected difference, E[x] − E[x̂]: the best shop's typical " +
+            "rating minus that of the shop you named (x: a slice's " +
+            "rating at the best shop, x̂: at your pick). How much better the best " +
+            "shop truly is. Hidden truth; blank when you named the best " +
+            "shop." },
+    { label: "Observed", html: OBSERVED, num: true,
+      key: c => c.observed ?? -Infinity,
+      text: c => c.correct ? "" : c.observed === null ? "untasted"
+                                                      : fmt(c.observed),
+      help: "Observed difference, x̄ − x̂̄: your average slice at the best " +
+            "shop minus your average at your pick. Negative means the " +
+            "slices you tasted made your pick look better: that's what " +
+            "fooled you. \"untasted\": you never tried the best shop." },
+    { label: "Top-two gap", html: GAP, num: true, key: c => c.gap,
+      text: c => fmt(c.gap),
+      help: "Top-two gap, E[x] − E[x′]: the best shop's typical rating " +
+            "minus the runner-up's (x′: a slice's rating at the second-best shop). " +
+            "Small means a close race, hard to call. Hidden truth." },
   ];
 
   // opts: {sort: {col, dir}, onSort(col), onPick(idx)}
@@ -53,8 +84,10 @@ const PostMortem = (function () {
       if (c.num) th.className = "num";
       const b = document.createElement("button");
       b.className = "sort";
-      b.textContent = c.label;
-      b.title = c.help || "Sort by " + c.label;
+      // c.html is one of the constant notation strings above
+      if (c.html) b.innerHTML = c.html;
+      else b.textContent = c.label;
+      b.title = (c.help ? c.help + " " : "") + "Click to sort.";
       b.onclick = () => opts.onSort(c.label);
       th.appendChild(b);
       if (opts.sort.col === c.label) {
@@ -114,10 +147,22 @@ const PostMortem = (function () {
     return x + w + 5;
   }
 
-  function plot(host, res, idx) {
+  function plot(host, res, idx, all) {
     host.replaceChildren();
     const n = res.history.length, right = res.guess === res.best;
-    const k = res.mean.length;
+
+    const obs = res.mean.map(() => []);
+    res.history.forEach(([shop, x], t) => obs[shop].push([x, t]));
+    const avgOf = i => obs[i].length
+      ? obs[i].reduce((a, o) => a + o[0], 0) / obs[i].length : null;
+    const ranked = res.mean.map((m, i) => i).sort((a, b) => res.mean[b] - res.mean[a]);
+    const runnerUp = ranked[1];
+    // the best shop, and the one it lost to (or, when named, its runner-up)
+    const focus = new Set([res.best, right ? runnerUp : res.guess]);
+    const order = all ? ranked : ranked.filter(i => focus.has(i));
+    const k = order.length;
+    const sym = i => i === res.best ? "x" : i === res.guess ? "x̂"
+                   : i === runnerUp ? "x′" : null;
 
     const head = document.createElement("p");
     head.className = "replay-head";
@@ -125,18 +170,31 @@ const PostMortem = (function () {
     head.append(` Crawl ${idx}: named shop ${res.guess} after ${n} slices.` +
       (right ? " That is the best shop." : ` The best shop was ${res.best}.`));
     host.appendChild(head);
+    if (!right) {
+      const d = document.createElement("p");
+      d.className = "pm-diffs";
+      const ob = avgOf(res.best), og = avgOf(res.guess);
+      // only numbers and the constant notation go into this HTML
+      d.innerHTML = `${EXPECTED} = ${fmt(res.mean[res.best] - res.mean[res.guess])}` +
+        " <span class=\"muted\">(expected: how much better the best shop truly " +
+        "is)</span><br>" + (ob === null || og === null
+          ? `${OBSERVED}: <span class="muted">shop ${ob === null ? res.best
+             : res.guess} was never tasted</span>`
+          : `${OBSERVED} = ${fmt(ob - og)} <span class="muted">(observed: ` +
+            (ob < og ? "your slices made your pick look better" :
+                       "your slices favored the best shop, yet it wasn't named") +
+            ")</span>");
+      host.appendChild(d);
+    }
 
-    const obs = res.mean.map(() => []);
-    res.history.forEach(([shop, x], t) => obs[shop].push([x, t]));
-    const order = res.mean.map((m, i) => i).sort((a, b) => res.mean[b] - res.mean[a]);
-
-    // ratings axis: every shop's curve out to 2.5 sd, and every slice
+    // ratings axis: the shown shops' curves out to 2.5 sd, and their slices
     let lo = Infinity, hi = -Infinity;
-    res.mean.forEach((m, i) => {
+    for (const i of order) {
+      const m = res.mean[i];
       lo = Math.min(lo, m - 2.5 * res.sd[i]);
       hi = Math.max(hi, m + 2.5 * res.sd[i]);
       for (const [x] of obs[i]) { lo = Math.min(lo, x); hi = Math.max(hi, x); }
-    });
+    }
     lo = Math.floor(lo);
     hi = Math.ceil(hi);
     const plotW = W - LEFT - RIGHT;
@@ -145,7 +203,8 @@ const PostMortem = (function () {
 
     // stack each shop's slices: bins[i] = [[bin, [[x, t], ...]], ...]
     let tallest = 1;
-    const bins = obs.map(list => {
+    const bins = obs.map((list, i) => {
+      if (!order.includes(i)) return [];
       const m = new Map();
       for (const o of [...list].sort((a, b) => a[1] - b[1])) {
         const b = Math.floor((o[0] - lo) / binW);
@@ -160,7 +219,7 @@ const PostMortem = (function () {
     const H = k * PH + AXIS;
 
     // curves share one density scale: a consistent shop is tall and narrow
-    const peak = Math.max(...res.sd.map(s => 1 / (s * Math.sqrt(2 * Math.PI))));
+    const peak = Math.max(...order.map(i => 1 / (res.sd[i] * Math.sqrt(2 * Math.PI))));
     const scaleY = (PH - 16) / peak;
 
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "pm-plot",
@@ -206,7 +265,7 @@ const PostMortem = (function () {
         });
       }
       const xs = obs[i].map(o => o[0]);
-      const avg = xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+      const avg = avgOf(i);
       if (avg !== null) {
         el("line", { x1: sx(avg), x2: sx(avg), y1: base + 4, y2: y0 + 6,
                      class: "pm-avg" }, g);
@@ -217,11 +276,13 @@ const PostMortem = (function () {
       let bx = 66;
       if (i === res.best) bx = svgBadge(g, bx, y0 + 20, "BEST", "ok");
       if (picked) svgBadge(g, bx, y0 + 20, "YOUR PICK", right ? "ok" : "bad");
+      // x-bar style labels: SVG has no overline, so "avg" names the bar
+      const v = sym(i);
       el("text", { x: 10, y: y0 + 38, class: "pm-note" }, g).textContent =
-        xs.length ? `${xs.length} slice${xs.length > 1 ? "s" : ""}, ` +
-                    `your avg ${avg.toFixed(2)}` : "not tasted";
+        xs.length ? `${xs.length} slice${xs.length > 1 ? "s" : ""}, avg ` +
+                    `${v ? v + " " : ""}= ${avg.toFixed(2)}` : "not tasted";
       el("text", { x: 10, y: y0 + 54, class: "pm-note truth" }, g).textContent =
-        `typical ${m.toFixed(2)}, sd ${s.toFixed(2)}`;
+        (v ? `E[${v}]` : "typical") + ` = ${m.toFixed(2)}, sd ${s.toFixed(2)}`;
     });
 
     // ratings axis
@@ -240,22 +301,30 @@ const PostMortem = (function () {
     wrap.appendChild(svg);
     host.appendChild(wrap);
 
+    if (!all) {
+      const more = document.createElement("p");
+      more.className = "hint";
+      more.textContent = `${res.mean.length - k} other shops hidden: tick ` +
+        "\"show every shop\" to see them.";
+      host.appendChild(more);
+    }
     const key = document.createElement("div");
     key.className = "key";
     key.innerHTML =
       '<span><svg width="12" height="11" viewBox="0 0 12 11"><polygon ' +
       'class="pm-slice" points="1,1 11,1 6,10"/></svg>a slice tasted, ' +
       "stacked by its rating (hover for when)</span>" +
-      '<span><i class="ln avg"></i>your average for that shop</span>' +
+      `<span><i class="ln avg"></i>your average there <span>(${N.xbar})</span></span>` +
       '<span><i class="ln curve"></i>the shop\'s true ratings</span>' +
-      '<span><i class="ln mean"></i>its typical rating</span>';
+      `<span><i class="ln mean"></i>its typical rating <span>(E[${N.x}])</span></span>`;
     host.appendChild(key);
 
     const note = document.createElement("p");
     note.className = "hint";
-    note.textContent = "Curves and typical ratings are the hidden truth, " +
-      "shown only here. Shops are sorted best first; curves share one " +
-      "scale, so a consistent shop's is tall and narrow.";
+    note.textContent = "x: a slice's rating at the best shop, x̂: at " +
+      "your pick, x′: at the runner-up. Curves and typical ratings E[·] are the " +
+      "hidden truth, shown only here. Shops are sorted best first; curves " +
+      "share one scale, so a consistent shop's is tall and narrow.";
     host.appendChild(note);
   }
 

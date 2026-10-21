@@ -370,6 +370,11 @@ button.chip.file.on { background: var(--ink); color: #fff;
 .badge.warn { background: #fef3c7; color: var(--warn); }
 
 /* -------------------------------------------------------- post-mortem */
+.checks { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.ov { text-decoration: overline; }
+.runs th button.sort i, .pm-diffs i, .key i:not(.ln) { font-family: Georgia,
+  "Times New Roman", serif; font-size: 1.08em; text-transform: none; }
+.pm-diffs { margin: 0 0 8px !important; font-variant-numeric: tabular-nums; }
 .check { display: inline-flex; align-items: center; gap: 6px;
   font-size: .92rem; color: var(--muted); cursor: pointer; }
 .pm-table-wrap {

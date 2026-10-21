@@ -133,8 +133,13 @@ estimate = Racer(z=2.5).estimate</pre></li>
     <section class="card wide" data-show="practice" id="pm-card">
       <div class="card-head">
         <h2>Post-mortem</h2>
-        <label class="check"><input type="checkbox" id="wrong-only">
-          wrong crawls only</label>
+        <div class="checks">
+          <label class="check"><input type="checkbox" id="wrong-only">
+            wrong crawls only</label>
+          <label class="check" title="Off: plot only the best shop and the
+            one you named (or, when you named the best, the runner-up)">
+            <input type="checkbox" id="all-shops"> show every shop</label>
+        </div>
       </div>
       <details id="run-code" class="run-code" open hidden>
         <summary>Code for this run</summary>

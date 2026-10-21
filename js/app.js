@@ -429,22 +429,23 @@ def estimate(crawl):
 
   // ------------------------------------------------- per-crawl details
   // a run's per-crawl results, for its post-mortem: {correct, slices, guess,
-  // best, gap, shortfall}, one entry per crawl. Kept in memory and, space
+  // best, gap, shortfall, observed (null: untasted)}, one entry per crawl. Kept in memory and, space
   // allowing, in localStorage; when missing, rebuilt by re-running the run.
   const details = new Map();
   const detailKey = id => "slice_crawl.detail." + id;
-  const round3 = v => Math.round(v * 1000) / 1000;
+  const round3 = v => v === null ? null : Math.round(v * 1000) / 1000;
 
   function detailOf(res) {
     return { correct: res.correct, slices: res.slices, guess: res.guess,
-             best: res.best, gap: res.gap, shortfall: res.shortfall };
+             best: res.best, gap: res.gap, shortfall: res.shortfall,
+             observed: res.observed };
   }
 
   function saveDetail(id, d) {
     details.set(id, d);
     const packed = JSON.stringify({ c: d.correct.map(Number).join(""),
       s: d.slices, g: d.guess, b: d.best, gap: d.gap.map(round3),
-      sf: d.shortfall.map(round3) });
+      sf: d.shortfall.map(round3), od: d.observed.map(round3) });
     // full: drop the oldest runs' details (they rebuild when opened)
     const old = [...runs].sort((a, b) => a.when - b.when).map(r => r.id)
       .filter(x => x !== id);
@@ -462,9 +463,11 @@ def estimate(crawl):
     if (details.has(id)) return details.get(id);
     try {
       const p = JSON.parse(localStorage.getItem(detailKey(id)));
-      if (!p) return null;
+      // saved before the observed difference was kept: rebuild
+      if (!p || !p.od) return null;
       const d = { correct: [...p.c].map(ch => ch === "1"), slices: p.s,
-                  guess: p.g, best: p.b, gap: p.gap, shortfall: p.sf };
+                  guess: p.g, best: p.b, gap: p.gap, shortfall: p.sf,
+                  observed: p.od };
       details.set(id, d);
       return d;
     } catch (e) { return null; }
@@ -485,6 +488,7 @@ def estimate(crawl):
     renderCode();
     pmRows = {};
     pmFor = null;
+    pmShown = null;
     $("pm-table-wrap").hidden = true;
     $("pm-plot").replaceChildren();
     if (!r) {
@@ -580,6 +584,7 @@ def estimate(crawl):
   let pmRows = {};      // crawl idx -> its row in the crawls table
   let pmFor = null;     // what the crawls table shows: "id|sort|filter"
   let pmCrawl = null;   // the crawl plotted
+  let pmShown = null;   // {res, idx} of the plot, redrawn when the toggle flips
 
   const setupOf = r => ({ n_shop: r.n_shop, family: r.family, race: r.race,
                           n_crawl: r.n_crawl, seed: r.seed });
@@ -599,7 +604,7 @@ def estimate(crawl):
       if (wrongOnly && d.correct[i]) continue;
       crawls.push({ idx: i, correct: d.correct[i], guess: d.guess[i],
                     best: d.best[i], slices: d.slices[i], gap: d.gap[i],
-                    shortfall: d.shortfall[i] });
+                    shortfall: d.shortfall[i], observed: d.observed[i] });
     }
     $("pm-table-wrap").hidden = false;
     pmRows = PostMortem.table($("crawls"), crawls, {
@@ -684,7 +689,8 @@ def estimate(crawl):
     setBusy(false);
     if (stale(r)) return;
     if (!res.ok) { $("pm-plot").textContent = res.error; return; }
-    PostMortem.plot($("pm-plot"), res, idx);
+    pmShown = { res, idx };
+    PostMortem.plot($("pm-plot"), res, idx, $("all-shops").checked);
   }
 
   // -------------------------------------------------------- leaderboard
@@ -869,6 +875,13 @@ def estimate(crawl):
     runs = [];
     store.set("runs", runs);
     select(null);
+  };
+  $("all-shops").checked = store.get("allShops", false);
+  $("all-shops").onchange = () => {
+    store.set("allShops", $("all-shops").checked);
+    if (pmShown && $("pm-plot").firstChild) {
+      PostMortem.plot($("pm-plot"), pmShown.res, pmShown.idx, $("all-shops").checked);
+    }
   };
   $("wrong-only").checked = store.get("wrongOnly", false);
   $("wrong-only").onchange = () => {

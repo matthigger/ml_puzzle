@@ -210,6 +210,18 @@ def call(estimate, crawl, idx):
         raise RuntimeError(f'crawl {idx}: ' + user_error(exc, 'your code'))
 
 
+def observed_diff(history, best, guess):
+    """ average rating tasted at shop best minus that at shop guess, or
+    None if either went untasted """
+    avg = {}
+    for shop in (best, guess):
+        x = [r for i, r in history if i == shop]
+        if not x:
+            return None
+        avg[shop] = sum(x) / len(x)
+    return avg[best] - avg[guess]
+
+
 def run(name, setup, progress=None, every=100):
     """ runs estimator name on setup['n_crawl'] crawls
 
@@ -226,12 +238,15 @@ def run(name, setup, progress=None, every=100):
             median_slices, p90_slices, seconds, and one entry per crawl in
             each of: slices, correct, guess (shop named), best (true best
             shop), gap (best minus second-best typical rating), shortfall
-            (best minus the named shop's typical rating)
+            (best minus the named shop's typical rating), observed (the
+            average slice tasted at the best shop minus that at the named
+            one; None if either went untasted)
     """
     setup = json.loads(setup)
     estimate = lookup(name)
     n_crawl, seed = setup['n_crawl'], setup['seed']
-    slices, correct, guesses, bests, gaps, shortfalls = [], [], [], [], [], []
+    slices, correct, guesses, bests, gaps, shortfalls, observed = (
+        [], [], [], [], [], [], [])
     start = time.perf_counter()
     try:
         for idx in range(n_crawl):
@@ -244,6 +259,7 @@ def run(name, setup, progress=None, every=100):
             bests.append(crawl._best)
             gaps.append(top[0] - top[1])
             shortfalls.append(top[0] - crawl._mean[guess])
+            observed.append(observed_diff(crawl.history, crawl._best, guess))
             if progress is not None and (idx + 1) % every == 0:
                 progress(idx + 1, n_crawl, sum(correct), sum(slices))
     except RuntimeError as exc:
@@ -259,7 +275,7 @@ def run(name, setup, progress=None, every=100):
         p90_slices=srt[min(n_crawl - 1, int(.9 * n_crawl))],
         seconds=time.perf_counter() - start,
         slices=slices, correct=correct, guess=guesses, best=bests, gap=gaps,
-        shortfall=shortfalls))
+        shortfall=shortfalls, observed=observed))
 
 
 def replay(name, setup, idx):
