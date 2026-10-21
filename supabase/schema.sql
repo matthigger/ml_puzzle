@@ -39,6 +39,20 @@
 
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
+
+-- earlier drafts' functions and class-code table: gone, so no old
+-- signature stays callable around the board codes
+drop function if exists public.leaderboard(text);
+drop function if exists public.leaderboard(text, text);
+drop function if exists public.delete_entry(text);
+drop function if exists public.delete_entry(text, text);
+drop function if exists public.post_entry(text, text, text, double precision,
+  double precision, integer, integer, integer, bigint, jsonb);
+drop function if exists public.post_entry(text, text, text, text, text, jsonb);
+drop function if exists public.pending_entries();
+drop function if exists public.set_result(bigint, integer, text,
+  double precision, double precision, integer, integer, integer, bigint, text);
+drop table if exists private.config;
 -- board codes come from pgcrypto (Supabase keeps it in "extensions")
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
