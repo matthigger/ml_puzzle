@@ -1,6 +1,6 @@
-// The page: editor and files, crawl setup, runs table (each run keeps its
-// code), replay, leaderboard posting, tabs. Python work goes through Py
-// (js/py.js).
+// The page: editor and files, runs (each keeps its code; click one to replay
+// it and read its code), leaderboard posting, tabs. Python work goes
+// through Py (js/py.js).
 
 (function () {
   const $ = id => document.getElementById(id);
@@ -21,6 +21,21 @@ def estimate(crawl):
     return avg.index(max(avg))
 `;
 
+  // the baselines' code (py/runner.py, taste_each), shown like a run's own
+  function baselineCode(name) {
+    const n = name.split(" ").pop();
+    return { main: `def estimate(crawl):
+    """ ${n} slices from every shop, best average wins """
+    avg = []
+    for i in range(crawl.n_shop):
+        total = 0
+        for _ in range(${n}):
+            total += crawl.taste(i)
+        avg.append(total / ${n})
+    return avg.index(max(avg))
+`, helpers: {} };
+  }
+
   // ------------------------------------------------- browser storage
   // per-browser conveniences only: everything works without it
   const store = {
@@ -40,15 +55,21 @@ def estimate(crawl):
   const editor = $("code");
   editor.value = store.get("code", EXAMPLE);
   let helpers = store.get("helpers", {});   // {filename: source}
-  let runs = store.get("runs", []);         // newest first
+  // run records: {id, name, estimator, baseline, code: {main, helpers} |
+  // null, n_shop, family, race, n_crawl, seed, accuracy, accuracy_se,
+  // mean_slices, median_slices, p90_slices, seconds, when, wrong: [idx]}
+  let runs = store.get("runs", []);
+  let selectedId = store.get("selected", null);
+  let sort = store.get("sort", { col: "When", dir: -1 });
   let loaded = null;    // {source, helpers, names} the worker has run
   let busy = false;     // a load or run is in progress
-  let latest = null;    // last run, with per-crawl correct / slices
   let mode = "practice";
 
   const helperKey = () => JSON.stringify(helpers);
   const dirty = () => !loaded || loaded.source !== editor.value ||
     loaded.helpers !== helperKey();
+  const selected = () => runs.find(r => r.id === selectedId) || null;
+  const codeOf = r => r.baseline ? baselineCode(r.name) : r.code;
 
   // ------------------------------------------------------- messages
   function loadMsg(text, kind) {
@@ -58,11 +79,11 @@ def estimate(crawl):
     el.textContent = text || "";
   }
   const runMsg = (text, kind) => {
-    $("run-msg").textContent = text || " ";
+    $("run-msg").textContent = text || " ";
     $("run-msg").className = "msg-line " + (kind || "");
   };
   const postMsg = (text, kind) => {
-    $("post-msg").textContent = text || " ";
+    $("post-msg").textContent = text || " ";
     $("post-msg").className = "msg-line " + (kind || "");
   };
 
@@ -73,34 +94,45 @@ def estimate(crawl):
     $("base-btn").disabled = !ready;
     $("stop-btn").disabled = !busy;
     updateReplayNav();
+    if (!busy) queueMicrotask(pumpReplay);
   }
 
   // ------------------------------------------------------- loading code
-  // loads run one after another (adding a helper, then opening a notebook,
-  // starts two); each loads whatever the editor holds when its turn comes
-  let loading = Promise.resolve(true);
-  function loadCode() {
-    loading = loading.then(doLoad, doLoad);
-    return loading;
+  // the worker holds one program at a time: the editor's, or that of a run
+  // being replayed. Loads run one after another.
+  let queue = Promise.resolve();
+  function serial(fn) {
+    const p = queue.then(fn, fn);
+    queue = p.catch(() => {});
+    return p;
   }
 
-  async function doLoad() {
-    if (!Py.ready) return false;
-    const source = editor.value, hk = helperKey();
+  async function loadInWorker(source, helperFiles) {
     setBusy(true);
+    try {
+      const res = await Py.call("load", { source, helpers: helperFiles });
+      loaded = { source, helpers: JSON.stringify(helperFiles), names: res.names };
+      return res;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // loads the editor's code (whatever it holds when its turn comes) and
+  // refreshes the Estimator menu
+  const loadCode = () => serial(loadEditor);
+
+  async function loadEditor() {
+    if (!Py.ready) return false;
     loadMsg("Running your code...");
     let res;
     try {
-      res = await Py.call("load", { source, helpers });
+      res = await loadInWorker(editor.value, { ...helpers });
     } catch (e) {
-      setBusy(false);
       loadMsg(e.message === "stopped" ? "Stopped while loading." : e.message,
               "error");
       return false;
     }
-    setBusy(false);
-    loaded = { source, helpers: hk, names: res.names };
-
     const sel = $("estimator"), keep = sel.value;
     sel.replaceChildren();
     for (const n of res.names) sel.add(new Option(n, n));
@@ -115,8 +147,6 @@ def estimate(crawl):
     else if (!res.names.length) {
       loadMsg("No function that takes a crawl was found: define " +
               "estimate(crawl).", "error");
-    } else if (!res.names.includes("estimate")) {
-      loadMsg("Loaded. No estimate() yet: the leaderboard needs one.", "note");
     } else loadMsg("");
     return res.ok && res.names.length > 0;
   }
@@ -126,59 +156,41 @@ def estimate(crawl):
     return loadCode();
   }
 
-  // --------------------------------------------------------------- setup
-  function preset() { return store.get("preset", "official"); }
-
-  function formSetup() {
-    let s = { ...OFFICIAL };
-    if (preset() === "custom") {
-      let lo = Math.max(2, parseInt($("shop-lo").value) || 2);
-      let hi = Math.max(2, parseInt($("shop-hi").value) || lo);
-      if (hi < lo) [lo, hi] = [hi, lo];
-      s = { n_shop: lo === hi ? lo : [lo, hi], family: $("family").value,
-            race: $("race").value };
+  // puts run r's program in the worker, leaving the editor alone; false if
+  // it no longer loads
+  async function ensureRunLoaded(r) {
+    if (r.baseline) return true;
+    const key = JSON.stringify(r.code.helpers);
+    if (loaded && loaded.source === r.code.main && loaded.helpers === key) {
+      return loaded.names.includes(r.estimator);
     }
-    s.n_crawl = Math.min(100000, Math.max(1, parseInt($("n-crawl").value) || 1));
-    s.seed = Math.max(0, parseInt($("seed").value) || 0);
-    return s;
+    try {
+      const res = await serial(() => loadInWorker(r.code.main, r.code.helpers));
+      return res.ok && res.names.includes(r.estimator);
+    } catch (e) {
+      return false;
+    }
   }
 
-  function setupKey(s) {
-    if (s.n_shop === 8 && s.family === "bell" && s.race === "official") {
-      return "official";
-    }
-    const shops = Array.isArray(s.n_shop) ? s.n_shop.join(" to ") : s.n_shop;
-    const fam = { bell: "bell", heavy: "heavy tails", disaster: "disasters" };
-    return `${shops} shops, ${fam[s.family]}, ${s.race} race`;
+  // --------------------------------------------------------------- setup
+  function formSetup() {
+    return { ...OFFICIAL,
+      n_crawl: Math.min(100000, Math.max(1, parseInt($("n-crawl").value) || 1)),
+      seed: Math.max(0, parseInt($("seed").value) || 0) };
   }
 
   function saveForm() {
-    store.set("form", { lo: $("shop-lo").value, hi: $("shop-hi").value,
-      family: $("family").value, race: $("race").value,
-      n_crawl: $("n-crawl").value, seed: $("seed").value });
+    store.set("form.v2", { n_crawl: $("n-crawl").value, seed: $("seed").value });
   }
 
   function restoreForm() {
-    const f = store.get("form", null);
-    if (f) {
-      $("shop-lo").value = f.lo; $("shop-hi").value = f.hi;
-      $("family").value = f.family; $("race").value = f.race;
-      $("n-crawl").value = f.n_crawl; $("seed").value = f.seed;
-    }
-    showPreset();
-  }
-
-  function showPreset() {
-    for (const b of $("preset").querySelectorAll("button")) {
-      b.setAttribute("aria-checked", b.dataset.v === preset());
-    }
-    $("custom").hidden = preset() !== "custom";
+    const f = store.get("form.v2", null);
+    if (f) { $("n-crawl").value = f.n_crawl; $("seed").value = f.seed; }
   }
 
   // ---------------------------------------------------------------- runs
   // runs name on setup; returns the run's record (also kept in runs), or
-  // null after an error or stop. code ({main, helpers}) is what the run
-  // loaded, kept so the row can be reopened or posted later
+  // null after an error or stop
   async function runOne(name, setup, { baseline = false, label = name,
                                        code = null, onProgress } = {}) {
     const t0 = performance.now();
@@ -196,20 +208,19 @@ def estimate(crawl):
     }
     const rec = {
       id: Date.now() + Math.random(), name: label, estimator: name, baseline,
-      code,
-      key: setupKey(setup), n_shop: setup.n_shop, family: setup.family,
-      race: setup.race, n_crawl: setup.n_crawl, seed: setup.seed,
+      code, n_shop: setup.n_shop, family: setup.family, race: setup.race,
+      n_crawl: setup.n_crawl, seed: setup.seed,
       accuracy: res.accuracy, accuracy_se: res.accuracy_se,
       mean_slices: res.mean_slices, median_slices: res.median_slices,
       p90_slices: res.p90_slices,
       seconds: (performance.now() - t0) / 1000, when: Date.now(),
+      wrong: res.correct.flatMap((c, i) => c ? [] : [i]),
     };
     // a baseline replaces its older copy on the same crawls
     runs = runs.filter(r => !(baseline && r.baseline && r.name === name &&
-      r.key === rec.key && r.n_crawl === rec.n_crawl && r.seed === rec.seed));
+      r.n_crawl === rec.n_crawl && r.seed === rec.seed));
     runs.unshift(rec);
     store.set("runs", runs);
-    latest = { ...rec, correct: res.correct, slices: res.slices };
     return rec;
   }
 
@@ -240,10 +251,13 @@ def estimate(crawl):
     }
     $("bar").style.width = "100%";
     $("run-name").value = "";
-    runMsg(`Done in ${rec.seconds.toFixed(1)} s.`);
-    renderAll();
-    const firstWrong = latest.correct.indexOf(false);
-    replay(firstWrong >= 0 ? firstWrong : 0);
+    const [v] = verdict(rec);
+    runMsg(`Done in ${rec.seconds.toFixed(1)} s: ${pct(rec.accuracy)} right, ` +
+           `${rec.mean_slices.toFixed(1)} slices on average` +
+           { yes: " (clears 95%).", no: " (below 95%).",
+             maybe: " (too close to 95% to call)." }[v],
+           v === "yes" ? "ok" : "");
+    select(rec, false);
   }
 
   async function baselinesClicked() {
@@ -259,8 +273,7 @@ def estimate(crawl):
     setBusy(false);
     $("bar").style.width = "0";
     runMsg(Py.ready ? "Baselines added." : "Stopped.");
-    latest = null;    // replay stays on the student's last run
-    renderAll();
+    renderRuns();
   }
 
   function verdict(r) {
@@ -270,18 +283,78 @@ def estimate(crawl):
     return ["maybe", "warn"];
   }
 
+  function stamp(t) {
+    const d = new Date(t);
+    const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    if (d.toDateString() === new Date().toDateString()) return time;
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+      ", " + time;
+  }
+
+  // the runs table's columns: heading, sort key, and whether a first click
+  // sorts high to low
+  const COLUMNS = [
+    { label: "Run", key: r => r.name.toLowerCase() },
+    { label: "Crawls", num: true, key: r => r.n_crawl },
+    { label: "Seed", num: true, key: r => r.seed },
+    { label: "Right", num: true, key: r => r.accuracy, desc: true },
+    { label: "Avg slices", num: true, key: r => r.mean_slices },
+    { label: "Median", num: true, key: r => r.median_slices },
+    { label: "90th pct", num: true, key: r => r.p90_slices },
+    { label: "95%?", key: r => ({ yes: 2, maybe: 1, no: 0 })[verdict(r)[0]],
+      desc: true },
+    { label: "Time", num: true, key: r => r.seconds },
+    { label: "When", key: r => r.when, desc: true },
+    { label: "" },
+  ];
+
+  function renderHead() {
+    const row = $("runs").tHead.rows[0];
+    row.replaceChildren();
+    for (const c of COLUMNS) {
+      const th = document.createElement("th");
+      if (c.num) th.className = "num";
+      row.appendChild(th);
+      if (!c.key) continue;
+      const b = button(c.label, "Sort by " + c.label, () => {
+        sort = sort.col === c.label ? { col: c.label, dir: -sort.dir }
+                                    : { col: c.label, dir: c.desc ? -1 : 1 };
+        store.set("sort", sort);
+        renderHead();
+        renderRuns();
+      });
+      b.className = "sort";
+      th.appendChild(b);
+      if (sort.col === c.label) {
+        th.setAttribute("aria-sort", sort.dir > 0 ? "ascending" : "descending");
+      }
+    }
+  }
+
+  function sortedRuns() {
+    const col = COLUMNS.find(c => c.key && c.label === sort.col) ||
+      COLUMNS.find(c => c.label === "When");
+    return [...runs].sort((a, b) => {
+      const x = col.key(a), y = col.key(b);
+      return (x < y ? -1 : x > y ? 1 : 0) * sort.dir;
+    });
+  }
+
   function renderRuns() {
     const tbody = $("runs").tBodies[0];
     tbody.replaceChildren();
     if (!runs.length) {
       const td = tbody.insertRow().insertCell();
-      td.colSpan = 10;
+      td.colSpan = COLUMNS.length;
       td.className = "muted";
       td.textContent = "No runs yet.";
     }
-    for (const r of runs) {
+    for (const r of sortedRuns()) {
       const tr = tbody.insertRow();
-      if (r.baseline) tr.className = "baseline";
+      tr.className = "pick" + (r.baseline ? " baseline" : "") +
+        (r.id === selectedId ? " selected" : "");
+      tr.title = "Replay this run and see its code";
+      tr.onclick = e => { if (!e.target.closest("input, button")) select(r); };
       const add = (v, cls) => {
         const td = tr.insertCell();
         td.textContent = v;
@@ -290,8 +363,8 @@ def estimate(crawl):
       };
       if (r.baseline) add(r.name);
       else tr.insertCell().appendChild(nameInput(r));
-      add(r.key + (r.seed ? `, seed ${r.seed}` : ""), "muted");
       add(r.n_crawl, "num");
+      add(r.seed, "num");
       add(`${pct(r.accuracy)} ± ${(200 * r.accuracy_se).toFixed(1)}`, "num");
       add(r.mean_slices.toFixed(1), "num");
       add(r.median_slices, "num");
@@ -300,19 +373,24 @@ def estimate(crawl):
       add(v).appendChild(Object.assign(document.createElement("i"),
         { className: "status-dot " + cls }));
       add(r.seconds.toFixed(1) + " s", "num");
+      add(stamp(r.when), "muted").title = new Date(r.when).toLocaleString();
+
       const acts = document.createElement("div");
       acts.className = "acts";
       tr.insertCell().appendChild(acts);
-      if (r.code) {
-        acts.append(button("Load code", "Put this run's code back in the " +
-                           "editor", () => loadRunCode(r)),
-                    button("Add to leaderboard", "Re-run this code on our " +
-                           "end and post its score", () => openPost(r)));
+      if (!r.baseline) {
+        const post = button("Add to leaderboard",
+          r.code ? "Re-run this code on our end and post its score"
+                 : "Run it again first: this run was saved before runs " +
+                   "kept their code", () => openPost(r));
+        post.disabled = !r.code;
+        acts.appendChild(post);
       }
       const del = button("×", "Remove this run", () => {
         runs = runs.filter(x => x.id !== r.id);
         store.set("runs", runs);
-        renderAll();
+        if (r.id === selectedId) select(null);
+        else renderRuns();
       });
       del.className = "x";
       acts.appendChild(del);
@@ -339,24 +417,130 @@ def estimate(crawl):
       r.name = inp.value.trim() || r.estimator;
       inp.value = r.name;
       store.set("runs", runs);
-      renderLatest();
+      if (r.id === selectedId) renderRunInfo();
     };
     inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
     return inp;
   }
 
-  async function loadRunCode(r) {
+  // ------------------------------------------------- the selected run
+  // selects run r (or none): highlights its row, describes it and shows its
+  // code above the replay, replays its first wrong crawl
+  function select(r, scroll = true) {
+    selectedId = r ? r.id : null;
+    store.set("selected", selectedId);
+    renderRuns();
+    renderRunInfo();
+    if (!r) {
+      $("replay").innerHTML = '<p class="muted">Click a run above to replay ' +
+        "its crawls with the hidden truth revealed.</p>";
+      return;
+    }
+    replay(r.wrong && r.wrong.length ? r.wrong[0] : 0);
+    if (scroll) $("replay-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function renderRunInfo() {
+    const r = selected(), code = r && codeOf(r);
+    $("run-info").hidden = !r;
+    $("run-code").hidden = !code;
+    updateReplayNav();
+    if (!r) return;
+
+    const host = $("run-info");
+    host.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "run-title";
+    title.appendChild(Object.assign(document.createElement("b"),
+      { textContent: r.name }));
+    if (r.baseline) title.append(" (built-in baseline)");
+    else if (r.name !== r.estimator) {
+      title.append(" runs ");
+      title.appendChild(Object.assign(document.createElement("code"),
+        { textContent: r.estimator + "(crawl)" }));
+    }
+    const [v, cls] = verdict(r);
+    title.append(" ", Object.assign(document.createElement("span"), {
+      className: "badge " + cls,
+      textContent: { yes: "clears 95%", no: "below 95%", maybe: "maybe 95%" }[v],
+    }));
+    const stats = document.createElement("div");
+    stats.className = "muted";
+    stats.textContent = `${r.n_crawl} crawls, seed ${r.seed}: ` +
+      `${pct(r.accuracy)} ± ${(200 * r.accuracy_se).toFixed(1)} right, ` +
+      `${r.mean_slices.toFixed(1)} slices on average (median ` +
+      `${r.median_slices}, 90th pct ${r.p90_slices}). Ran ${stamp(r.when)}.`;
+    host.append(title, stats);
+    if (!code) {
+      host.appendChild(Object.assign(document.createElement("div"), {
+        className: "muted",
+        textContent: "This run was saved before runs kept their code, so " +
+          "it can't be replayed: run it again." }));
+      $("replay").replaceChildren();
+      return;
+    }
+    showCodeFile("main");
+  }
+
+  // the code panel: one file at a time (the main code, then its helpers)
+  let shownFile = "main";
+  function showCodeFile(file) {
+    const code = codeOf(selected());
+    shownFile = file;
+    const files = [["main", "main code"],
+                   ...Object.keys(code.helpers).map(f => [f, f])];
+    const chips = $("code-files");
+    chips.replaceChildren();
+    chips.hidden = files.length < 2;
+    for (const [f, label] of files) {
+      const c = button(label, "Show " + label, () => showCodeFile(f));
+      c.className = "chip file" + (f === file ? " on" : "");
+      chips.appendChild(c);
+    }
+    $("code-view").textContent = shownText();
+  }
+
+  function shownText() {
+    const code = codeOf(selected());
+    return shownFile === "main" ? code.main : code.helpers[shownFile];
+  }
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(shownText());
+      $("copy-code").textContent = "Copied";
+      setTimeout(() => { $("copy-code").textContent = "Copy"; }, 1500);
+    } catch (e) {
+      const range = document.createRange();
+      range.selectNodeContents($("code-view"));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+    }
+  }
+
+  function downloadCode() {
+    const r = selected();
+    const slug = r.name.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([shownText()], { type: "text/x-python" }));
+    a.download = shownFile === "main" ? (slug || "estimate") + ".py" : shownFile;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  async function openInEditor() {
+    const r = selected(), code = codeOf(r);
     if (busy) return;
-    const same = editor.value === r.code.main &&
-      helperKey() === JSON.stringify(r.code.helpers);
+    const same = editor.value === code.main &&
+      helperKey() === JSON.stringify(code.helpers);
     if (!same && !confirm(`Replace the editor's code and helper files with ` +
                           `the code of "${r.name}"?`)) return;
-    editor.value = r.code.main;
-    helpers = { ...r.code.helpers };
+    editor.value = code.main;
+    helpers = { ...code.helpers };
     store.set("code", editor.value);
     store.set("helpers", helpers);
     renderHelpers();
-    $("run-name").value = r.name === r.estimator ? "" : r.name;
+    $("run-name").value = r.baseline || r.name === r.estimator ? "" : r.name;
     await loadCode();
     const sel = $("estimator");
     if ([...sel.options].some(o => o.value === r.estimator)) {
@@ -365,71 +549,61 @@ def estimate(crawl):
     editor.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  function renderLatest() {
-    const host = $("latest");
-    const r = runs.find(x => !x.baseline);
-    host.replaceChildren();
-    if (!r) {
-      host.innerHTML = '<p class="muted">Run an estimator to see how it did.</p>';
-      return;
-    }
-    const [v, cls] = verdict(r);
-    const rows = [
-      ["Run", r.name === r.estimator ? r.name : `${r.name} (${r.estimator})`],
-      ["Crawls", `${r.n_crawl} (${r.key}, seed ${r.seed})`],
-      ["Right", `${pct(r.accuracy)} ± ${pct(2 * r.accuracy_se)}`],
-      ["Average slices", r.mean_slices.toFixed(1)],
-      ["Median / 90th pct", `${r.median_slices} / ${r.p90_slices}`],
-    ];
-    for (const [k, val] of rows) {
-      const row = document.createElement("div");
-      row.className = "row";
-      const a = document.createElement("span"), b = document.createElement("span");
-      a.textContent = k; b.textContent = val; b.className = "val";
-      row.append(a, b);
-      host.appendChild(row);
-    }
-    const p = document.createElement("p");
-    p.className = "verdict " + cls;
-    p.textContent = {
-      yes: "Clears the 95% bar.",
-      no: "Below the 95% bar.",
-      maybe: "Too close to 95% to call: try more crawls.",
-    }[v];
-    host.appendChild(p);
-  }
-
-  function renderAll() {
-    renderRuns();
-    renderLatest();
-    updateReplayNav();
-  }
-
   // ------------------------------------------------------------- replay
   function updateReplayNav() {
-    const ok = !!latest && !busy && Py.ready;
-    $("prev-wrong").disabled = !ok || !latest.correct.includes(false);
-    $("next-wrong").disabled = !ok || !latest.correct.includes(false);
+    const r = selected();
+    const ok = !!r && !!codeOf(r) && !busy && Py.ready;
+    const anyWrong = ok && !!(r.wrong && r.wrong.length);
+    $("prev-wrong").disabled = !anyWrong;
+    $("next-wrong").disabled = !anyWrong;
     $("crawl-idx").disabled = !ok;
-    if (latest) $("crawl-idx").max = latest.n_crawl - 1;
+    if (r) $("crawl-idx").max = r.n_crawl - 1;
   }
 
-  async function replay(idx) {
-    if (!latest || busy) return;
-    idx = Math.min(Math.max(0, idx), latest.n_crawl - 1);
+  // the latest replay asked for runs once the worker is free; older asks
+  // are dropped
+  let wanted = null, pumping = false;
+  function replay(idx) {
+    const r = selected();
+    if (!r || !codeOf(r)) return;
+    idx = Math.min(Math.max(0, idx), r.n_crawl - 1);
     $("crawl-idx").value = idx;
-    if (!(await ensureLoaded())) return;
-    const setup = { n_shop: latest.n_shop, family: latest.family,
-                    race: latest.race, n_crawl: latest.n_crawl, seed: latest.seed };
+    wanted = { r, idx };
+    pumpReplay();
+  }
+
+  async function pumpReplay() {
+    if (pumping) return;
+    pumping = true;
+    try {
+      while (wanted && Py.ready && !busy) {
+        const { r, idx } = wanted;
+        wanted = null;
+        await replayNow(r, idx);
+      }
+    } finally {
+      pumping = false;
+    }
+  }
+
+  async function replayNow(r, idx) {
+    if (!(await ensureRunLoaded(r))) {
+      $("replay").textContent = "This run's code no longer loads here.";
+      return;
+    }
+    const setup = { n_shop: r.n_shop, family: r.family, race: r.race,
+                    n_crawl: r.n_crawl, seed: r.seed };
     setBusy(true);
     let res;
     try {
-      res = await Py.call("replay", { name: latest.estimator, setup, idx });
+      res = await Py.call("replay", { name: r.estimator, setup, idx });
     } catch (e) {
       setBusy(false);
       return;
     }
     setBusy(false);
+    // another run was picked meanwhile: its own replay is on the way
+    if (selected() !== r) return;
     if (!res.ok) {
       $("replay").textContent = res.error;
       return;
@@ -438,13 +612,11 @@ def estimate(crawl):
   }
 
   function stepWrong(dir) {
-    if (!latest) return;
-    const n = latest.n_crawl;
-    let i = parseInt($("crawl-idx").value) || 0;
-    for (let k = 0; k < n; k++) {
-      i = (i + dir + n) % n;
-      if (!latest.correct[i]) { replay(i); return; }
-    }
+    const r = selected();
+    if (!r || !r.wrong || !r.wrong.length) return;
+    const i = parseInt($("crawl-idx").value) || 0, w = r.wrong;
+    replay(dir > 0 ? (w.find(k => k > i) ?? w[0])
+                   : (w.findLast(k => k < i) ?? w[w.length - 1]));
   }
 
   // -------------------------------------------------------- leaderboard
@@ -552,16 +724,13 @@ def estimate(crawl):
       const chip = document.createElement("span");
       chip.className = "chip";
       chip.textContent = name + " ";
-      const x = document.createElement("button");
-      x.className = "x";
-      x.title = "Remove " + name;
-      x.textContent = "×";
-      x.onclick = () => {
+      const x = button("×", "Remove " + name, () => {
         delete helpers[name];
         store.set("helpers", helpers);
         renderHelpers();
         loadCode();
-      };
+      });
+      x.className = "x";
       chip.appendChild(x);
       host.appendChild(chip);
     }
@@ -572,7 +741,11 @@ def estimate(crawl):
     $("py-status").textContent = text;
     $("py-status").className = "pill " + state;
     setBusy(false);
-    if (state === "ready") loadCode();
+    if (state === "ready") {
+      loadCode().then(() => {
+        if (selected()) replay(parseInt($("crawl-idx").value) || 0);
+      });
+    }
     if (state === "failed") {
       loadMsg("Python couldn't start in this browser. Try reloading the " +
               "page, or a recent Chrome, Firefox, Edge or Safari.", "error");
@@ -620,26 +793,23 @@ def estimate(crawl):
     loadCode();
   };
 
-  for (const b of $("preset").querySelectorAll("button")) {
-    b.onclick = () => { store.set("preset", b.dataset.v); showPreset(); };
-  }
-  for (const id of ["shop-lo", "shop-hi", "family", "race", "n-crawl", "seed"]) {
-    $(id).addEventListener("change", saveForm);
-  }
+  for (const id of ["n-crawl", "seed"]) $(id).addEventListener("change", saveForm);
   $("run-btn").onclick = runClicked;
   $("stop-btn").onclick = stop;
   $("base-btn").onclick = baselinesClicked;
   $("clear-btn").onclick = () => {
     if (!runs.length || !confirm("Clear every run in the table?")) return;
     runs = [];
-    latest = null;
     store.set("runs", runs);
-    renderAll();
+    select(null);
   };
   $("crawl-idx").addEventListener("change", () =>
     replay(parseInt($("crawl-idx").value) || 0));
   $("prev-wrong").onclick = () => stepWrong(-1);
   $("next-wrong").onclick = () => stepWrong(1);
+  $("copy-code").onclick = copyCode;
+  $("download-code").onclick = downloadCode;
+  $("open-code").onclick = openInEditor;
 
   $("post-form").onsubmit = submitPost;
   $("post-cancel").onclick = () => $("post-dialog").close();
@@ -679,9 +849,17 @@ def estimate(crawl):
       BUILD.sha.slice(0, 7)}</a>, ${when}`;
   }
 
+  // runs saved before runs kept their setup were all official
+  for (const r of runs) {
+    r.n_shop = r.n_shop ?? 8;
+    r.family = r.family ?? "bell";
+    r.race = r.race ?? "official";
+  }
   restoreForm();
   renderHelpers();
-  renderAll();
+  renderHead();
+  renderRuns();
+  renderRunInfo();
   setMode(Object.keys(HASH).find(m => HASH[m] === location.hash) || "practice");
   Py.start();
 })();

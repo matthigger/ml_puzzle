@@ -42,7 +42,7 @@
           imports.</li>
         <li>Every function that takes a crawl shows up in the
           <b>Estimator</b> menu, so you can compare a few in one go. Name a
-          run to tell versions apart; each row keeps the code it ran.</li>
+          run to tell versions apart: each row keeps the code it ran.</li>
         <li>Anything callable works, even a method of an object:
 <pre>class Racer:
     def __init__(self, z=2):    # runs once, when your code loads
@@ -58,120 +58,76 @@ estimate = Racer(z=2.5).estimate</pre></li>
 
   <main>
     <!-- ------------------------------------------------------ practice -->
-    <div class="panel" data-show="practice">
-      <div class="col">
-        <section class="card code-card">
-          <div class="card-head">
-            <h2>Your code</h2>
-            <span id="py-status" class="pill">Starting Python...</span>
-          </div>
-          <textarea id="code" spellcheck="false" autocomplete="off"
-            aria-label="Your code"></textarea>
-          <div class="buttons">
-            <button id="open-btn">Open .py / .ipynb</button>
-            <button id="helper-btn">Add helper .py</button>
-            <button id="reset-btn" class="quiet">Example</button>
-            <input id="open-file" type="file" accept=".py,.ipynb" hidden>
-            <input id="helper-file" type="file" accept=".py" multiple hidden>
-          </div>
-          <div id="helpers" class="chips"></div>
-          <div class="field">
-            <span>Estimator</span>
-            <select id="estimator" disabled>
-              <option>load your code first</option>
-            </select>
-          </div>
-          <label class="field"><span>Run name</span>
-            <input id="run-name" maxlength="60" autocomplete="off"
-              placeholder="optional, e.g. race z=2.5"></label>
-          <div id="load-msg" class="msg" hidden></div>
-          <details id="output-box" class="output" hidden>
-            <summary>Printed while loading</summary>
-            <pre id="output"></pre>
-          </details>
-        </section>
+    <div class="panel code-panel" data-show="practice">
+      <section class="card code-card">
+        <div class="card-head">
+          <h2>Your code</h2>
+          <span id="py-status" class="pill">Starting Python...</span>
+        </div>
+        <textarea id="code" spellcheck="false" autocomplete="off"
+          aria-label="Your code"></textarea>
+        <div class="buttons">
+          <button id="open-btn">Open .py / .ipynb</button>
+          <button id="helper-btn">Add helper .py</button>
+          <button id="reset-btn" class="quiet">Example</button>
+          <input id="open-file" type="file" accept=".py,.ipynb" hidden>
+          <input id="helper-file" type="file" accept=".py" multiple hidden>
+        </div>
+        <div id="helpers" class="chips"></div>
+        <div id="load-msg" class="msg" hidden></div>
+        <details id="output-box" class="output" hidden>
+          <summary>Printed while loading</summary>
+          <pre id="output"></pre>
+        </details>
+      </section>
 
-      </div>
-
-      <div class="col">
-        <section class="card">
-          <h2>Crawls</h2>
-          <div class="field">
-            <span>Setup</span>
-            <div class="seg" id="preset" role="radiogroup">
-              <button role="radio" data-v="official">Official</button>
-              <button role="radio" data-v="custom">Stress test</button>
-            </div>
-          </div>
-          <div id="custom" class="custom">
-            <label class="field"><span>Shops</span>
-              <span class="inline">
-                <input id="shop-lo" type="number" min="2" max="50" value="8">
-                <span>to</span>
-                <input id="shop-hi" type="number" min="2" max="50" value="8">
-              </span>
-            </label>
-            <label class="field"><span>Ratings</span>
-              <select id="family">
-                <option value="bell">bell curve</option>
-                <option value="heavy">heavy tails (now and then wildly
-                  off)</option>
-                <option value="disaster">occasional disaster (burnt,
-                  dropped)</option>
-              </select>
-            </label>
-            <label class="field"><span>Race</span>
-              <select id="race">
-                <option value="easy">easy (best shop well ahead)</option>
-                <option value="official">official</option>
-                <option value="close">close (top two nearly tied)</option>
-              </select>
-            </label>
-          </div>
-          <label class="field"><span>Crawls</span>
-            <input id="n-crawl" type="number" min="1" max="100000"
-              value="5000"></label>
-          <label class="field"><span>Seed</span>
-            <input id="seed" type="number" min="0" value="0"></label>
-          <div class="buttons run-row">
-            <button id="run-btn" class="primary" disabled>Run</button>
-            <button id="stop-btn" disabled>Stop</button>
-          </div>
-          <div class="progress" aria-hidden="true"><div id="bar"></div></div>
-          <p id="run-msg" class="msg-line">&nbsp;</p>
-        </section>
-        <section class="card" id="latest-card">
-          <h2>Latest run</h2>
-          <div id="latest" class="readout">
-            <p class="muted">Run an estimator to see how it did.</p>
-          </div>
-        </section>
-      </div>
+      <section class="card">
+        <h2>Run</h2>
+        <div class="field">
+          <span>Estimator</span>
+          <select id="estimator" disabled>
+            <option>load your code first</option>
+          </select>
+        </div>
+        <label class="field"><span>Run name</span>
+          <input id="run-name" maxlength="60" autocomplete="off"
+            placeholder="optional, e.g. race z=2.5"></label>
+        <label class="field"><span>Crawls</span>
+          <input id="n-crawl" type="number" min="1" max="100000"
+            value="1000"></label>
+        <label class="field"><span>Seed</span>
+          <input id="seed" type="number" min="0" value="0"></label>
+        <p class="hint">Each crawl: 8 shops, bell-curve ratings. The same
+          seed gives the same crawls, whatever the estimator.</p>
+        <div class="buttons run-row">
+          <button id="run-btn" class="primary" disabled>Run</button>
+          <button id="stop-btn" disabled>Stop</button>
+        </div>
+        <div class="progress" aria-hidden="true"><div id="bar"></div></div>
+        <p id="run-msg" class="msg-line">&nbsp;</p>
+      </section>
     </div>
 
     <section class="card wide" data-show="practice">
       <div class="card-head">
         <h2>Runs</h2>
         <div class="buttons">
-          <button id="base-btn" disabled>Add baselines (this setup)</button>
+          <button id="base-btn" disabled>Add baselines</button>
           <button id="clear-btn" class="quiet">Clear all</button>
         </div>
       </div>
       <div class="table-wrap">
-        <table id="runs" class="runs">
-          <thead><tr>
-            <th>Run</th><th>Setup</th><th class="num">Crawls</th>
-            <th class="num">Right</th><th class="num">Avg slices</th>
-            <th class="num">Median</th><th class="num">90th pct</th>
-            <th>95%?</th><th class="num">Time</th><th></th>
-          </tr></thead>
+        <table id="runs" class="runs sortable">
+          <thead><tr></tr></thead>
           <tbody></tbody>
         </table>
       </div>
-      <p class="hint">Saved in this browser only. &ldquo;Right&rdquo; is
-        &plusmn; 2 standard deviations; <b>maybe</b> means that range
-        includes 95%, so run more crawls to tell. Click a name to rename
-        it.</p>
+      <p class="hint">Saved in this browser only. Click a row to replay it
+        and see its code, a name to rename it, a heading to sort.
+        &ldquo;Right&rdquo; is &plusmn; 2 standard deviations; <b>maybe</b>
+        means that range includes 95%, so run more crawls to tell.
+        &ldquo;Add baselines&rdquo; runs the simplest estimators on the
+        same crawls.</p>
     </section>
 
     <section class="card wide" data-show="practice" id="replay-card">
@@ -184,7 +140,19 @@ estimate = Racer(z=2.5).estimate</pre></li>
           <button id="next-wrong" disabled>Wrong &rarr;</button>
         </div>
       </div>
-      <div id="replay"><p class="muted">After a run, replay any of its
+      <div id="run-info" class="run-info" hidden></div>
+      <details id="run-code" class="run-code" open hidden>
+        <summary>Code for this run</summary>
+        <div id="code-files" class="chips"></div>
+        <pre id="code-view"></pre>
+        <div class="buttons">
+          <button id="copy-code">Copy</button>
+          <button id="download-code">Download</button>
+          <button id="open-code" title="Replace the editor's code with this">
+            Open in editor</button>
+        </div>
+      </details>
+      <div id="replay"><p class="muted">Click a run above to replay its
         crawls with the hidden truth revealed.</p></div>
     </section>
 
@@ -225,11 +193,13 @@ estimate = Racer(z=2.5).estimate</pre></li>
       <label class="field"><span>Class code</span>
         <input id="post-code" required autocomplete="off"
           placeholder="from the assignment"></label>
-      <p class="hint">We re-run this code on our end: 5000 fresh crawls of
-        the official setup, on a new seed nobody has seen. The board shows
-        that score, not this run's; it usually appears within the hour.
-        Your code is saved with the entry, and only the instructor can see
-        it. Adding another run later replaces your entry.</p>
+      <p class="callout">We re-run this code on our end, on
+        <b>5000 fresh crawls with a new seed</b> nobody has seen. The board
+        shows that score, not this run's, so expect it to differ a little;
+        it usually appears within the hour.</p>
+      <p class="hint">Your code is saved with the entry, and only the
+        instructor can see it. Adding another run later replaces your
+        entry.</p>
       <p id="post-msg" class="msg-line">&nbsp;</p>
       <div class="buttons dialog-buttons">
         <button type="button" id="post-cancel">Cancel</button>

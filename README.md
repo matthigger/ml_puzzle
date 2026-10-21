@@ -5,17 +5,20 @@ code or open their `.py` / `.ipynb` (plus helper `.py` files), and the page
 runs their `estimate(crawl)` on as many random crawls as they like:
 
 - **Practice tab.** Pick an estimator (every top-level function that takes
-  a crawl is listed) and optionally name the run, the official setup or a
-  stress test (number of shops, rating shape, how close the race is), the
-  number of crawls and a seed. Run shows a live progress bar, then a
-  summary and a table of every run (kept in the browser's localStorage).
-  Each row keeps the code it ran: rename it in place, "Load code" puts it
-  back in the editor, "Add to leaderboard" posts it (a popup asks for a
-  name and the class code). "Add baselines" runs taste each shop 5 / 20 /
-  40 times on the same crawls. Replay shows one crawl with the hidden truth
-  revealed: each shop's typical rating and spread, how many slices the
-  estimator tasted there, and when. No chart: plotting their runs is the
-  students' job.
+  a crawl is listed), optionally name the run, set the number of crawls
+  (default 1000) and a seed; crawls are always the official setup. Run
+  shows a live progress bar, then adds a row to the runs table (kept in the
+  browser's localStorage, sortable by any column, timestamped). Each row
+  keeps the code it ran. Clicking a row highlights it and loads it below:
+  a banner naming the run and its stats, its code read only (Copy,
+  Download, or an explicit "Open in editor"), and a replay of one crawl
+  with the hidden truth revealed (each shop's typical rating and spread,
+  how many slices the estimator tasted there, and when), stepping through
+  the wrong ones. Replaying loads that run's code into Python without
+  touching the editor. "Add to leaderboard" on a row posts its code (a
+  popup asks for a name and the class code, and warns about the re-run).
+  "Add baselines" runs taste each shop 5 / 20 / 40 times on the same
+  crawls. No chart: plotting their runs is the students' job.
 - **Leaderboard tab.** Read only. Every score on it is our own re-run
   (below), never a number the browser sent. Adding again from the same
   browser replaces that entry.
