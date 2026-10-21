@@ -1,0 +1,46 @@
+# Re-run waiting leaderboard entries (verify/verify.py) every 10 minutes.
+# Needs repo secrets SUPABASE_URL and SUPABASE_SECRET_KEY; without them it
+# does nothing. The students' code runs in a container that sees neither.
+name: Re-run leaderboard entries
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify
+  cancel-in-progress: false
+
+jobs:
+  rerun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # the host side builds the circuits
+      - run: pip install numpy
+      - id: waiting
+        name: Count waiting entries
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "Leaderboard secrets not set: nothing to do."
+            echo "n=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "n=$(python3 verify/verify.py --count)" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build the re-run container
+        if: steps.waiting.outputs.n != '0'
+        run: docker build -q -f verify/Dockerfile -t ghost-circuit-verify .
+      - name: Re-run
+        if: steps.waiting.outputs.n != '0'
+        run: python3 verify/verify.py

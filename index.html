@@ -50,8 +50,8 @@
         <li>Every function that takes <code>(x, y)</code> shows up in the
           <b>Estimator</b> menu, so you can compare a few in one go. Name a
           run to tell versions apart: each row keeps the code it ran.</li>
-        <li>Your estimator runs once per circuit: keep it under a second or
-          so.</li>
+        <li>Your estimator runs once per circuit: it should take well under a
+          second (the leaderboard allows about one).</li>
         <li>Anything callable works, even a method of an object:
 <pre>class Fitter:
     def __init__(self, n_top=8):   # runs once, when your code loads
@@ -123,7 +123,7 @@ estimate = Fitter(n_top=6).estimate</pre></li>
             placeholder="optional, e.g. top 6"></label>
         <label class="field"><span>Circuits</span>
           <input id="n-circuit" type="number" min="1" max="20000"
-            value="200"></label>
+            value="1000"></label>
         <label class="field"><span>Seed</span>
           <input id="seed" type="number" min="0" value="0"></label>
         <p class="hint">Each circuit: 150 devices logged for 72 hours, 8 of
@@ -219,7 +219,7 @@ estimate = Fitter(n_top=6).estimate</pre></li>
         <button type="submit" class="primary">Show</button>
       </form>
       <p id="board-title" class="board-title" hidden></p>
-      <p class="hint">Every score here is our own re-run: 1000 fresh
+      <p class="hint">Every score here is our own re-run: 2000 fresh
         circuits of the official setup, on a seed nobody has seen. To add
         yours, use <b>Add to leaderboard</b> on a row of the Practice tab's
         runs.</p>
@@ -249,7 +249,7 @@ estimate = Fitter(n_top=6).estimate</pre></li>
         <input id="post-code" required autocomplete="off" spellcheck="false"
           placeholder="from the assignment"></label>
       <p class="callout">We re-run this code on our end, on
-        <b>1000 fresh circuits with a new seed</b> nobody has seen. The
+        <b>2000 fresh circuits with a new seed</b> nobody has seen. The
         board shows that score, not this run's, so expect it to differ a
         little; it usually appears within the hour.</p>
       <p class="hint">Your code is saved with the entry, and only the

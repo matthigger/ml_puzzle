@@ -74,11 +74,15 @@ class Circuit:
             n_device (int): devices logged
             n_on (int): devices wired to this circuit
             noise_sd (float): the meter's noise, watts
-            seed (int): seeds everything
+            seed (int | list): seeds everything (as numpy's SeedSequence
+                does: every bit counts)
         """
-        rng = np.random.default_rng(seed)
-        duty = rng.uniform(.1, .6, n_device)
-        x = (rng.random((n_hour, n_device)) < duty).astype(int)
+        # the log (seen) and the circuit (hidden) come from independent
+        # streams, so x says nothing about the watts
+        seen, rng = (np.random.default_rng(s)
+                     for s in np.random.SeedSequence(seed).spawn(2))
+        duty = seen.uniform(.1, .6, n_device)
+        x = (seen.random((n_hour, n_device)) < duty).astype(int)
 
         on = rng.choice(n_device, n_on, replace=False)
         watts = np.zeros(n_device)
@@ -107,7 +111,8 @@ def check_watts(watts, n_device):
         raise TypeError(f'estimate returned {type(watts).__name__}, not '
                         f'{n_device} watts (one per device)') from None
     if w.size != n_device:
-        raise ValueError(f'estimate returned {w.size} numbers: need '
+        raise ValueError(f'estimate returned {w.size} '
+                         f'number{"" if w.size == 1 else "s"}: need '
                          f'{n_device}, one per device')
     w = w.ravel()
     if not np.all(np.isfinite(w)):
