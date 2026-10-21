@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import pathlib
+import random
 import secrets
 import subprocess
 import sys
@@ -43,6 +44,10 @@ N_CRAWL = 5000
 
 # wall-clock limit for one entry's whole re-run
 TIMEOUT_SEC = 15 * 60
+
+# longest protocol line accepted: a taste or a guess is a few bytes, the
+# load reply carries at most an error message
+MAX_LINE = 1 << 16
 
 DOCKER = ['docker', 'run', '--rm', '-i', '--network', 'none', '--read-only',
           '--tmpfs', '/tmp:size=64m', '--memory', '1g', '--cpus', '1',
@@ -62,7 +67,8 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
         main (str): the student's code
         helpers (dict): {filename: source} of helper .py files
         estimator (str): name of the estimator in that code
-        seed (int | None): None draws a secret one
+        seed (int | None): None draws a secret one, 63 bits, too many to
+            search for from the slices tasted
 
     Returns:
         result (dict): {accuracy, mean_slices, median_slices, p90_slices,
@@ -72,7 +78,7 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
         Failed: the code didn't load, raised, looped or timed out
     """
     if seed is None:
-        seed = secrets.randbits(31)
+        seed = secrets.randbits(63)
     start = time.monotonic()
     proc = subprocess.Popen(DOCKER + [image], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE,
@@ -87,7 +93,9 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
     # the student's code can reach the protocol, so every message is
     # untrusted: anything malformed fails the entry, never this script
     def recv():
-        line = proc.stdout.readline()
+        line = proc.stdout.readline(MAX_LINE)
+        if line and not line.endswith('\n'):
+            raise Failed('the code printed too much')
         if not line:
             if not timer.is_alive():
                 raise Failed(f'took over {timeout // 60} minutes for '
@@ -110,6 +118,10 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
             raise Failed(error(msg, 'the code did not load'))
         for idx in range(n_crawl):
             crawl = SliceCrawl.sample(**OFFICIAL, seed=seed * 1_000_003 + idx)
+            # sample() seeds the slices with 32 bits, few enough to recover
+            # from a few tastes (and with them every shop's mean): reseed
+            # from the whole secret
+            crawl._rng = random.Random(f'{seed}:{idx}')
             send({'n_shop': crawl.n_shop})
             while 't' in (msg := recv()):
                 try:
