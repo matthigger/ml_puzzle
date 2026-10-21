@@ -4,4 +4,6 @@
 const CONFIG = {
   supabaseUrl: null,  // "https://<project ref>.supabase.co"
   supabaseKey: null,  // "sb_publishable_..."
+  // this puzzle's id in the shared database (private.projects)
+  project: "slice_crawl",
 };

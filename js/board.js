@@ -1,4 +1,5 @@
-// Board: the class leaderboard, stored in Supabase (see supabase/schema.sql).
+// Board: the class leaderboard, stored in Supabase (see supabase/schema.sql),
+// a database shared by every puzzle: this page's entries are CONFIG.project.
 // The page calls three database functions over plain fetch, with the
 // project's publishable key (safe to publish: it can only call those).
 //
@@ -42,9 +43,10 @@ const Board = (function () {
     return data;
   }
 
-  const list = () => rpc("leaderboard", { token: token() });
-  const remove = () => rpc("delete_entry", { token: token() });
-  const post = e => rpc("post_entry", { ...e, token: token() });
+  const project = CONFIG.project;
+  const list = () => rpc("leaderboard", { project, token: token() });
+  const remove = () => rpc("delete_entry", { project, token: token() });
+  const post = e => rpc("post_entry", { ...e, project, token: token() });
 
   const pct = v => (100 * v).toFixed(1) + "%";
 
@@ -54,7 +56,8 @@ const Board = (function () {
     tbody.replaceChildren();
     let rank = 0, section = null;
     for (const e of entries) {
-      const done = e.status === "done", clears = done && e.accuracy >= 0.95;
+      const done = e.status === "done", clears = done && e.qualifies;
+      const m = e.metrics || {};
       const sec = clears ? "top" : done ? "below" : "waiting";
       if (sec !== section && sec !== "top") {
         const tr = tbody.insertRow();
@@ -76,10 +79,10 @@ const Board = (function () {
       add(e.name + (e.mine ? " (you)" : ""));
       add(e.method);
       if (done) {
-        add(pct(e.accuracy), "num");
-        add(e.mean_slices.toFixed(1), "num");
-        add(e.median_slices, "num");
-        add(e.p90_slices, "num");
+        add(pct(m.accuracy), "num");
+        add(m.mean_slices.toFixed(1), "num");
+        add(m.median_slices, "num");
+        add(m.p90_slices, "num");
       } else {
         const td = add(e.status === "failed"
           ? "Your re-run failed: " + (e.error || "").trim().split("\n").pop()

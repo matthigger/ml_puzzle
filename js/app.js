@@ -810,7 +810,7 @@ def estimate(crawl):
     postMsg("Adding...");
     try {
       await Board.post({
-        code, name, method: r.name, estimator: r.estimator,
+        code, name, method: r.name, entry_point: r.estimator,
         source: { ...r.code,
                   build: (typeof BUILD !== "undefined" && BUILD) ? BUILD.sha : null },
       });

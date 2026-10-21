@@ -1,9 +1,11 @@
-""" Re-run leaderboard entries on fresh crawls, so every score is our own
+""" Re-run Slice Crawl leaderboard entries, so every score is our own
 
-The page posts code, never a score. This script takes each entry still
-waiting, runs its estimator on N_CRAWL crawls of the official setup with a
-seed drawn here (and never shown), and writes back the score the board
-displays.
+The page posts code, never a score. This script takes each slice_crawl
+entry still waiting, runs its estimator on N_CRAWL crawls of the official
+setup with a seed drawn here (and never shown), and writes back the score
+the board displays. The database is shared by every puzzle (see
+supabase/schema.sql); a puzzle's re-run script handles its own PROJECT and
+scores it its own way (score()).
 
 The student's code runs in a container with no network, a read-only disk,
 no secrets and limited memory / time (child.py). The crawls stay out here:
@@ -35,6 +37,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'py'))
 
 from slice_crawl import MAX_TASTE, OFFICIAL, SliceCrawl, TooManySlices
 
+PROJECT = 'slice_crawl'
 IMAGE = 'slice-crawl-verify'
 N_CRAWL = 5000
 
@@ -142,6 +145,14 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
                 seconds=time.monotonic() - start)
 
 
+def score(res):
+    """ The board's view of a re-run: (metrics, qualifies, rank), rank lower
+    is better among entries that qualify. """
+    metrics = {k: res[k] for k in ('accuracy', 'mean_slices', 'median_slices',
+                                   'p90_slices', 'n_crawl')}
+    return metrics, res['accuracy'] >= 0.95, res['mean_slices']
+
+
 def rpc(fn, body):
     """ Call a database function with the secret key; return its result. """
     key = os.environ['SUPABASE_SECRET_KEY']
@@ -161,25 +172,25 @@ def rpc(fn, body):
 def rerun_waiting():
     """ Re-run every entry waiting in the database, writing back each
     score (or why it failed). """
-    entries = rpc('pending_entries', {})
+    entries = rpc('pending_entries', {'project': PROJECT})
     print(f'{len(entries)} waiting')
     for e in entries:
         # any failure marks this entry failed, so a bad one can't stay
         # pending and stop every later run
         try:
             src = e['source']
-            res = rerun(src['main'], src.get('helpers', {}), e['estimator'])
-            body = dict(status='done', error=None, **res)
+            res = rerun(src['main'], src.get('helpers', {}), e['entry_point'])
+            metrics, qualifies, rank = score(res)
+            body = dict(status='done', error=None, metrics=metrics,
+                        qualifies=qualifies, rank=rank, seed=res['seed'])
             note = (f'{res["accuracy"]:.1%} right, {res["mean_slices"]:.1f}'
                     f' slices ({res["seconds"]:.0f} s)')
         except Exception as exc:
             msg = (str(exc) if isinstance(exc, Failed)
                    else f'the re-run broke down ({type(exc).__name__})')
-            body = dict(status='failed', error=msg[:2000],
-                        accuracy=None, mean_slices=None, median_slices=None,
-                        p90_slices=None, n_crawl=None, seed=None)
+            body = dict(status='failed', error=msg[:2000], metrics=None,
+                        qualifies=None, rank=None, seed=None)
             note = 'failed: ' + (msg.strip().splitlines() or [''])[-1][:100]
-        body.pop('seconds', None)
         rpc('set_result', dict(entry_id=e['id'], entry_version=e['version'],
                                **body))
         print(f'entry {e["id"]}: {note}')
@@ -198,7 +209,7 @@ def main():
     args = parser.parse_args()
 
     if args.count:
-        print(len(rpc('pending_entries', {})))
+        print(len(rpc('pending_entries', {'project': PROJECT})))
         return
     if not args.local:
         rerun_waiting()
