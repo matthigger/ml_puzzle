@@ -170,8 +170,13 @@ estimate = Racer(z=2.5).estimate</pre></li>
       <div class="pm-bar">
         <p id="pm-msg" class="hint">Click a run above to go through its
           crawls one by one, with the hidden truth revealed.</p>
-        <label class="check" id="wrong-only-box" hidden><input
-          type="checkbox" id="wrong-only"> wrong crawls only</label>
+        <span class="buttons" id="wrong-only-box" hidden>
+          <label class="check"><input type="checkbox" id="wrong-only"> wrong
+            crawls only</label>
+          <button id="download-results" class="quiet" title="Every crawl
+            of this run, one row each, for your own plots">Download
+            CSV</button>
+        </span>
       </div>
       <div class="table-wrap pm-table-wrap" id="pm-table-wrap" hidden>
         <table id="crawls" class="runs sortable">

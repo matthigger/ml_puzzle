@@ -447,6 +447,7 @@ button.chip.file.on { background: var(--ink); color: #fff;
 .pm-bar { display: flex; align-items: center; justify-content: space-between;
   gap: 4px 16px; flex-wrap: wrap; }
 .pm-bar .hint { margin: 0 !important; }
+.pm-bar .buttons { margin: 0; align-items: center; }
 .pm-bar + .pm-table-wrap { margin-top: 6px; }
 .ov { text-decoration: overline; }
 .runs th button.sort i, .key i:not(.ln) { font-family: Georgia,

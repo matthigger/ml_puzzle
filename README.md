@@ -15,7 +15,8 @@ runs their `estimate(crawl)` on as many random crawls as they like:
   keeps the code it ran. Clicking a row opens its post-mortem: its code
   read only (Copy, Download, or an explicit "Open in editor"), a sortable
   table with a row per crawl (right or wrong, shop named, best shop,
-  slices, top-two gap, shortfall; "wrong crawls only" filters it), and,
+  slices, top-two gap, shortfall; "wrong crawls only" filters it;
+  "Download CSV" saves every crawl of the run, one row each), and,
   for the crawl clicked, a strip per shop, best first: the shop's true bell
   curve and typical rating with every slice tasted there stacked as a
   pizza slice, the estimator's average, and which shop it named. Per-crawl

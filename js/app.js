@@ -622,6 +622,33 @@ def estimate(crawl):
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // run r's crawls as a tidy CSV, one row each; the run's columns repeat,
+  // so files from several runs stack (pd.concat)
+  function resultsCsv(r, d) {
+    const q = v => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const num = v => v === null ? "" : String(v);
+    const lines = ["run,estimator,n_shop,seed,crawl,correct,slices,pick,best," +
+                   "mu_best_minus_mu_pick,xbar_best_minus_xbar_pick,top_two_gap"];
+    for (let i = 0; i < r.n_crawl; i++) {
+      lines.push([q(r.name), q(r.estimator), r.n_shop, r.seed, i,
+                  d.correct[i] ? 1 : 0, d.slices[i], d.guess[i], d.best[i],
+                  num(round3(d.shortfall[i])), num(round3(d.observed[i])),
+                  num(round3(d.gap[i]))].join(","));
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function downloadResults() {
+    const r = selected(), d = r && getDetail(r.id);
+    if (!d) return;
+    const slug = r.name.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([resultsCsv(r, d)], { type: "text/csv" }));
+    a.download = `slice_crawl_${slug || "run"}_seed${r.seed}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
   // makes run r's code yours: in the editor if it's one file, else as files
   async function openInEditor() {
     const r = selected(), code = codeOf(r);
@@ -1064,6 +1091,7 @@ def estimate(crawl):
   };
   $("copy-code").onclick = copyCode;
   $("download-code").onclick = downloadCode;
+  $("download-results").onclick = downloadResults;
   $("open-code").onclick = openInEditor;
 
   $("post-form").onsubmit = submitPost;
