@@ -81,6 +81,8 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
         proc.stdin.write(json.dumps(obj) + '\n')
         proc.stdin.flush()
 
+    # the student's code can reach the protocol, so every message is
+    # untrusted: anything malformed fails the entry, never this script
     def recv():
         line = proc.stdout.readline()
         if not line:
@@ -88,14 +90,21 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
                 raise Failed(f'took over {timeout // 60} minutes for '
                              f'{n_crawl} crawls')
             raise Failed('the code stopped Python (out of memory?)')
-        return json.loads(line)
+        msg = json.loads(line)
+        if not isinstance(msg, dict):
+            raise ValueError('not an object')
+        return msg
+
+    def error(msg, default):
+        err = msg.get('error')
+        return err if isinstance(err, str) and err.strip() else default
 
     slices, correct = [], []
     try:
         send(dict(main=main, helpers=helpers, estimator=estimator))
         msg = recv()
-        if not msg['ok']:
-            raise Failed(msg['error'])
+        if msg.get('ok') is not True:
+            raise Failed(error(msg, 'the code did not load'))
         for idx in range(n_crawl):
             crawl = SliceCrawl.sample(**OFFICIAL, seed=seed * 1_000_003 + idx)
             send({'n_shop': crawl.n_shop})
@@ -104,14 +113,20 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
                     send({'r': crawl.taste(msg['t'])})
                 except (TooManySlices, IndexError):
                     send({'stop': True})
+            guess = msg.get('guess')
             if 'guess' not in msg:
-                raise Failed(msg.get('error', 'no guess'))
+                raise Failed(error(msg, f'crawl {idx}: no guess'))
+            if (type(guess) is not int
+                    or not 0 <= guess < crawl.n_shop):
+                raise Failed(f'crawl {idx}: guess {guess!r} is not a shop')
             if crawl.n_taste >= MAX_TASTE:
                 raise Failed(f'crawl {idx}: tasted too many slices without '
                              'naming a shop (an endless loop?)')
             slices.append(crawl.n_taste)
-            correct.append(msg['guess'] == crawl._best)
-    except (BrokenPipeError, OSError, ValueError, KeyError) as exc:
+            correct.append(guess == crawl._best)
+    except Failed:
+        raise
+    except Exception as exc:
         raise Failed(f'the re-run broke down ({type(exc).__name__})')
     finally:
         timer.cancel()
@@ -149,17 +164,21 @@ def rerun_waiting():
     entries = rpc('pending_entries', {})
     print(f'{len(entries)} waiting')
     for e in entries:
-        src = e['source']
+        # any failure marks this entry failed, so a bad one can't stay
+        # pending and stop every later run
         try:
+            src = e['source']
             res = rerun(src['main'], src.get('helpers', {}), e['estimator'])
             body = dict(status='done', error=None, **res)
             note = (f'{res["accuracy"]:.1%} right, {res["mean_slices"]:.1f}'
                     f' slices ({res["seconds"]:.0f} s)')
-        except Failed as exc:
-            body = dict(status='failed', error=str(exc)[:2000],
+        except Exception as exc:
+            msg = (str(exc) if isinstance(exc, Failed)
+                   else f'the re-run broke down ({type(exc).__name__})')
+            body = dict(status='failed', error=msg[:2000],
                         accuracy=None, mean_slices=None, median_slices=None,
                         p90_slices=None, n_crawl=None, seed=None)
-            note = 'failed: ' + str(exc).splitlines()[-1][:100]
+            note = 'failed: ' + (msg.strip().splitlines() or [''])[-1][:100]
         body.pop('seconds', None)
         rpc('set_result', dict(entry_id=e['id'], entry_version=e['version'],
                                **body))
