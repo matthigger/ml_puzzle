@@ -1,24 +1,37 @@
-# Re-run waiting leaderboard entries every 10 minutes: one job per puzzle,
-# each with its own verify/verify.py and container. Needs repo secrets
-# SUPABASE_URL and SUPABASE_SECRET_KEY; without them it does nothing. The
-# students' code runs in a container that sees neither.
+# Re-run waiting leaderboard entries: one job per puzzle, each with its own
+# verify/verify.py and container. Every post dispatches this for its puzzle
+# (supabase/schema.sql, dispatch_rerun); the schedule is the fallback, and
+# runs all three. Needs repo secrets SUPABASE_URL and SUPABASE_SECRET_KEY;
+# without them it does nothing. The students' code runs in a container that
+# sees neither.
 name: Re-run leaderboard entries
+run-name: Re-run ${{ inputs.puzzle || 'all' }}
 
 on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+    inputs:
+      puzzle:
+        type: choice
+        options: [all, slice_crawl, where_start, ghost_circuit]
+        default: all
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   rerun:
     strategy:
       fail-fast: false
       matrix:
-        puzzle: [slice_crawl, where_start, ghost_circuit]
-    # one run per puzzle at a time; verify.py keeps inside this timeout
+        puzzle: ${{ fromJSON((inputs.puzzle && inputs.puzzle != 'all')
+          && format('["{0}"]', inputs.puzzle)
+          || '["slice_crawl", "where_start", "ghost_circuit"]') }}
+    # one run per puzzle at a time, and at most one waiting (a newer one
+    # replaces it): a burst of posts makes two runs, not one each.
+    # verify.py keeps inside this timeout
     concurrency:
       group: verify-${{ matrix.puzzle }}
       cancel-in-progress: false
@@ -46,11 +59,20 @@ jobs:
           else
             echo "n=$(python3 verify/verify.py --count)" >> "$GITHUB_OUTPUT"
           fi
-      - name: Build the re-run container
+      # prebuilt by image.yml; built here if it isn't there (yet)
+      - name: Get the re-run container
         if: steps.waiting.outputs.n != '0'
         run: |
-          docker build -q -f verify/Dockerfile \
-            -t "$(echo '${{ matrix.puzzle }}' | tr _ -)-verify" .
+          local="$(echo '${{ matrix.puzzle }}' | tr _ -)-verify"
+          image=$(../.github/verify_image.sh)
+          if echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+               -u "${{ github.actor }}" --password-stdin > /dev/null \
+             && docker pull -q "$image"; then
+            docker tag "$image" "$local"
+          else
+            echo "no prebuilt $image: building it"
+            docker build -q -f verify/Dockerfile -t "$local" .
+          fi
       - name: Re-run
         if: steps.waiting.outputs.n != '0'
         run: python3 verify/verify.py
