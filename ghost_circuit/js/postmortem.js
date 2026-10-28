@@ -182,7 +182,7 @@ const PostMortem = (function () {
   }
 
   // least squares of the meter y on devices ids plus an always-on term:
-  // {b, w: {j: [w_hat, se]}, fit, mse}, or {error}
+  // {b, w: {j: w_hat}, fit, mse}, or {error}
   function ols(x, y, ids) {
     const n = y.length, p = ids.length + 1;
     if (p > n - 2) {
@@ -202,9 +202,8 @@ const PostMortem = (function () {
     const beta = inv.map(row => row.reduce((s, q, b) => s + q * v[b], 0));
     const fit = rows.map(r => r.reduce((s, q, k) => s + q * beta[k], 0));
     const rss = y.reduce((s, yt, t) => s + (yt - fit[t]) ** 2, 0);
-    const s2 = rss / (n - p);
     const w = {};
-    ids.forEach((j, k) => { w[j] = [beta[k], Math.sqrt(s2 * inv[k][k])]; });
+    ids.forEach((j, k) => { w[j] = beta[k]; });
     return { b: beta[p - 1], w, fit, mse: rss / n };
   }
 
@@ -332,10 +331,9 @@ const PostMortem = (function () {
       note.className = "hint";
       note.textContent = "Estimated: least squares of the meter on the " +
         "devices listed, plus an always-on load. On each chip, ŵ is that " +
-        "fit's watts for the device (its estimate of the true w) and ± " +
-        "is 2 standard errors, the spread the meter's noise alone gives " +
-        "ŵ (devices left out can bias ŵ beyond it). TP: named, on the " +
-        "circuit; FP: named, not on it; FN: on it, not named; TN: neither.";
+        "fit's watts for the device (its estimate of the true w). TP: " +
+        "named, on the circuit; FP: named, not on it; FN: on it, not " +
+        "named; TN: neither.";
       host.appendChild(note);
     }
 
@@ -350,10 +348,10 @@ const PostMortem = (function () {
         c.title = (hit ? `TP: named and on the circuit (true w = ` +
                          `${watts(res.w[j])} W)`
                        : "FP: named but not on the circuit (true w = 0)") +
-          ". ŵ ± 2 SE: its least-squares fitted watts.";
-        const f = !fitRes.error && fitRes.w[j];
+          ". ŵ: its least-squares fitted watts.";
+        const f = fitRes.error ? null : fitRes.w[j];
         c.innerHTML = `<span>${dev(j)}</span>` +
-          `<span class="gc-chip-w">${f ? `ŵ = ${watts(f[0])} ± ${watts(2 * f[1])} W` : ""}</span>` +
+          `<span class="gc-chip-w">${f === null ? "" : `ŵ = ${watts(f)} W`}</span>` +
           `<span class="badge ${hit ? "ok" : "bad"}">${hit ? "TP" : "FP"}</span>`;
         const minus = document.createElement("button");
         minus.className = "gc-chip-x";

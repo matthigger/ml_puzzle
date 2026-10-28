@@ -31,7 +31,7 @@ to the metered circuit (20 to 1500 W), the meter's hourly watts (`y`,
   chips (at first the estimate's), each with a − to remove it, and a + to
   add one (missed devices listed first). Every change refits least
   squares on the devices listed plus an always-on load, in the page, and
-  redraws MSE, F1 / TPR / FPR, each device's fitted watts ± 2 SE, and the
+  redraws MSE, F1 / TPR / FPR, each device's fitted watts, and the
   plot: each hour's meter (observed, black dot), fit (estimated, green
   bar) and error (red line). "Add baselines" runs the notebook's
   correlation guess, two top-8 rules (on minus off, least squares) and
