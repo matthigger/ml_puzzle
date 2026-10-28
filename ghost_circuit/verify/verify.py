@@ -4,43 +4,42 @@ The page posts code, never a score. This script takes each ghost_circuit
 entry still waiting, runs its estimator on N_CIRCUIT circuits of the
 official setup with a seed drawn here, and writes back the score the board
 displays, seed included: the Practice tab (or ghost_circuit.evaluate) with
-that seed and N_CIRCUIT circuits replays the re-run exactly. The database is shared by every puzzle (see
-../supabase/schema.sql); a puzzle's re-run script handles its own
-PROJECT and scores it its own way (score()).
+that seed and N_CIRCUIT circuits replays the re-run exactly. The database
+is shared by every puzzle (see ../supabase/schema.sql); a puzzle's re-run
+script handles its own PROJECT and scores it its own way (score()).
 
-The student's code runs in a container with no network, a read-only disk,
-no secrets and limited memory / time (child.py). The circuits stay out here:
-the container gets each circuit's x and y only, never which devices are on
-it. Every entry is ranked, by highest F1 (runner.summarize).
+The student's code runs in a sandbox (../../shared/sandbox.py: no network,
+no secrets, a read-only system, limited memory and processes) under a time
+limit, through child.py. The circuits stay out here: the sandbox gets each
+circuit's x and y only, never which devices are on it. Every entry is
+ranked, by highest F1 (runner.summarize).
 
     python3 verify/verify.py                      re-run every waiting entry
     python3 verify/verify.py --local my_code.py   try one file, no database
     python3 verify/verify.py --count              how many are waiting
 
-Needs the image (from this puzzle's folder):
-
-    docker build -f verify/Dockerfile -t ghost-circuit-verify .
-
-and, for the database, SUPABASE_URL and SUPABASE_SECRET_KEY in the
-environment (a secret / service_role key: never in the page).
+Needs bubblewrap (see sandbox.py) and, for the database, SUPABASE_URL and
+SUPABASE_SECRET_KEY in the environment (a secret / service_role key: never
+in the page).
 """
 import argparse
 import json
 import os
 import pathlib
 import secrets
-import subprocess
 import sys
 import threading
 import time
 import urllib.request
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'py'))
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / 'py'))
+sys.path.insert(0, str(HERE.parent.parent / 'shared'))
 
 import runner
+import sandbox
 
 PROJECT = 'ghost_circuit'
-IMAGE = 'ghost-circuit-verify'
 N_CIRCUIT = 2000
 
 # the secret seed: too many bits to search for from what the code sees, and
@@ -59,9 +58,10 @@ BUDGET_SEC = 100 * 60
 # numbers (under 1 KB), the load reply carries at most an error message
 MAX_LINE = 1 << 16
 
-DOCKER = ['docker', 'run', '--rm', '-i', '--network', 'none', '--read-only',
-          '--tmpfs', '/tmp:size=64m', '--memory', '1g', '--cpus', '1',
-          '--pids-limit', '64', '--cap-drop', 'ALL']
+# the sandbox's /verify: the child, and the puzzle code it imports
+FILES = {'child.py': HERE / 'child.py',
+         'runner.py': HERE.parent / 'py' / 'runner.py',
+         'ghost_circuit.py': HERE.parent / 'py' / 'ghost_circuit.py'}
 
 
 class Failed(Exception):
@@ -79,9 +79,9 @@ def no_constants(name):
 
 
 def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
-          image=IMAGE, timeout=TIMEOUT_SEC):
+          timeout=TIMEOUT_SEC):
     """ Run one estimator on n_circuit fresh official circuits, in a
-    container.
+    sandbox.
 
     Args:
         main (str): the student's code
@@ -100,18 +100,8 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
     if seed is None:
         seed = secrets.randbits(SEED_BITS)
     start = time.monotonic()
-    name = 'verify-' + secrets.token_hex(8)
-    proc = subprocess.Popen(DOCKER + ['--name', name, image],
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True)
-    # killing the docker client leaves its container running: kill that
-    # by name
-    def kill():
-        subprocess.run(['docker', 'kill', name], stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL)
-        proc.kill()
-
-    timer = threading.Timer(timeout, kill)
+    proc = sandbox.start(FILES)
+    timer = threading.Timer(timeout, proc.kill)
     timer.start()
 
     def send(obj):
@@ -173,7 +163,7 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
         raise Failed(f'the re-run broke down ({type(exc).__name__})')
     finally:
         timer.cancel()
-        kill()
+        proc.kill()
         proc.wait()
 
     return dict(runner.summarize(right, wrong), n_circuit=n_circuit,
@@ -208,6 +198,8 @@ def rpc(fn, body):
 def rerun_waiting():
     """ Re-run every entry waiting in the database, until none is
     left: entries posted mid-run are re-run too. """
+    # no sandbox, no re-run: the entries wait for one that has it
+    sandbox.check()
     start = time.monotonic()
     # (id, version) already re-run here: one whose result didn't save stays
     # pending, and is left to the next run rather than retried forever

@@ -1,9 +1,9 @@
 # Re-run waiting leaderboard entries: one job per puzzle, each with its own
-# verify/verify.py and container. Every post dispatches this for its puzzle
+# verify/verify.py. Every post dispatches this for its puzzle
 # (supabase/schema.sql, dispatch_rerun); the schedule is the fallback, and
 # runs all three. Needs repo secrets SUPABASE_URL and SUPABASE_SECRET_KEY;
-# without them it does nothing. The students' code runs in a container that
-# sees neither.
+# without them it does nothing. The students' code runs in a bubblewrap
+# sandbox (shared/sandbox.py) that sees neither.
 name: Re-run leaderboard entries
 run-name: Re-run ${{ inputs.puzzle || 'all' }}
 
@@ -19,7 +19,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   rerun:
@@ -45,11 +44,22 @@ jobs:
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - id: python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      # the host side builds the instances with numpy, outside the container
-      - run: pip install --quiet numpy
+      # what the students' code may import (and the instances need), in a
+      # venv kept between runs
+      - id: venv
+        uses: actions/cache@v4
+        with:
+          path: ~/venv
+          key: venv-${{ steps.python.outputs.python-version }}-${{ hashFiles('shared/requirements.txt') }}
+      - name: Install the libraries
+        if: steps.venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv ~/venv
+          ~/venv/bin/pip install --quiet -r ../shared/requirements.txt
       - id: waiting
         name: Count waiting entries
         run: |
@@ -57,22 +67,21 @@ jobs:
             echo "Leaderboard secrets not set: nothing to do."
             echo "n=0" >> "$GITHUB_OUTPUT"
           else
-            echo "n=$(python3 verify/verify.py --count)" >> "$GITHUB_OUTPUT"
+            echo "n=$(~/venv/bin/python verify/verify.py --count)" \
+              >> "$GITHUB_OUTPUT"
           fi
-      # prebuilt by image.yml; built here if it isn't there (yet)
-      - name: Get the re-run container
+      # bubblewrap, allowed the user namespaces Ubuntu restricts by default
+      # (this machine is thrown away after the job)
+      - name: Set up the sandbox
         if: steps.waiting.outputs.n != '0'
         run: |
-          local="$(echo '${{ matrix.puzzle }}' | tr _ -)-verify"
-          image=$(../.github/verify_image.sh)
-          if echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
-               -u "${{ github.actor }}" --password-stdin > /dev/null \
-             && docker pull -q "$image"; then
-            docker tag "$image" "$local"
-          else
-            echo "no prebuilt $image: building it"
-            docker build -q -f verify/Dockerfile -t "$local" .
-          fi
+          command -v bwrap > /dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq bubblewrap > /dev/null
+          }
+          sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 \
+            || true
+          bwrap --version
       - name: Re-run
         if: steps.waiting.outputs.n != '0'
-        run: python3 verify/verify.py
+        run: ~/venv/bin/python verify/verify.py

@@ -4,25 +4,22 @@ The page posts code, never a score. This script takes each where_start
 entry still waiting, runs its estimator on N_QUAKE quakes of the official
 setup with a seed drawn here, and writes back the score the board displays,
 seed included: the Practice tab (or where_start.evaluate) with that seed
-and N_QUAKE quakes replays the re-run exactly. The database is shared by every puzzle (see
-../supabase/schema.sql); a puzzle's re-run script handles its own
-PROJECT and scores it its own way (score()).
+and N_QUAKE quakes replays the re-run exactly. The database is shared by
+every puzzle (see ../supabase/schema.sql); a puzzle's re-run script handles
+its own PROJECT and scores it its own way (score()).
 
-The student's code runs in a container with no network, a read-only disk,
-no secrets and limited memory / time (child.py). The quakes stay out here:
-the container gets each quake's stations and arrival times, never its
-epicenter or origin time.
+The student's code runs in a sandbox (../../shared/sandbox.py: no network,
+no secrets, a read-only system, limited memory and processes) under a time
+limit, through child.py. The quakes stay out here: the sandbox gets each
+quake's stations and arrival times, never its epicenter or origin time.
 
     python3 verify/verify.py                      re-run every waiting entry
     python3 verify/verify.py --local my_code.py   try one file, no database
     python3 verify/verify.py --count              how many are waiting
 
-Needs the image (from this puzzle's folder):
-
-    docker build -f verify/Dockerfile -t where-start-verify .
-
-and, for the database, SUPABASE_URL and SUPABASE_SECRET_KEY in the
-environment (a secret / service_role key: never in the page).
+Needs bubblewrap (see sandbox.py) and, for the database, SUPABASE_URL and
+SUPABASE_SECRET_KEY in the environment (a secret / service_role key: never
+in the page).
 """
 import argparse
 import json
@@ -30,7 +27,6 @@ import math
 import os
 import pathlib
 import secrets
-import subprocess
 import sys
 import threading
 import time
@@ -38,12 +34,14 @@ import urllib.request
 
 import numpy as np
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'py'))
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / 'py'))
+sys.path.insert(0, str(HERE.parent.parent / 'shared'))
 
+import sandbox
 from where_start import HIT_BAR, HIT_KM, OFFICIAL, sample
 
 PROJECT = 'where_start'
-IMAGE = 'where-start-verify'
 N_QUAKE = 2000
 
 # the secret seed: too many bits to search for from what the code sees, and
@@ -62,9 +60,10 @@ BUDGET_SEC = 100 * 60
 # reply carries at most an error message
 MAX_LINE = 1 << 16
 
-DOCKER = ['docker', 'run', '--rm', '-i', '--network', 'none', '--read-only',
-          '--tmpfs', '/tmp:size=64m', '--memory', '1g', '--cpus', '1',
-          '--pids-limit', '64', '--cap-drop', 'ALL']
+# the sandbox's /verify: the child, and the puzzle code it imports
+FILES = {'child.py': HERE / 'child.py',
+         'runner.py': HERE.parent / 'py' / 'runner.py',
+         'where_start.py': HERE.parent / 'py' / 'where_start.py'}
 
 
 class Failed(Exception):
@@ -77,8 +76,8 @@ class Overtime(Failed):
 
 
 def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
-          image=IMAGE, timeout=TIMEOUT_SEC):
-    """Run one estimator on n_quake fresh official quakes, in a container.
+          timeout=TIMEOUT_SEC):
+    """Run one estimator on n_quake fresh official quakes, in a sandbox.
 
     Args:
         main (str): the student's code
@@ -97,18 +96,8 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
     if seed is None:
         seed = secrets.randbits(SEED_BITS)
     start = time.monotonic()
-    name = 'verify-' + secrets.token_hex(8)
-    proc = subprocess.Popen(DOCKER + ['--name', name, image],
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True)
-    # killing the docker client leaves its container running: kill that
-    # by name
-    def kill():
-        subprocess.run(['docker', 'kill', name], stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL)
-        proc.kill()
-
-    timer = threading.Timer(timeout, kill)
+    proc = sandbox.start(FILES)
+    timer = threading.Timer(timeout, proc.kill)
     timer.start()
 
     def send(obj):
@@ -165,7 +154,7 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         raise Failed(f'the re-run broke down ({type(exc).__name__})')
     finally:
         timer.cancel()
-        kill()
+        proc.kill()
         proc.wait()
 
     err = np.array(err_km)
@@ -208,6 +197,8 @@ def rpc(fn, body):
 def rerun_waiting():
     """Re-run every entry waiting in the database, until none is
     left: entries posted mid-run are re-run too."""
+    # no sandbox, no re-run: the entries wait for one that has it
+    sandbox.check()
     start = time.monotonic()
     # (id, version) already re-run here: one whose result didn't save stays
     # pending, and is left to the next run rather than retried forever

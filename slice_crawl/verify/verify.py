@@ -4,48 +4,46 @@ The page posts code, never a score. This script takes each slice_crawl
 entry still waiting, runs its estimator on N_CRAWL crawls of the official
 setup with a seed drawn here, and writes back the score the board displays,
 seed included: the Practice tab (or slice_crawl.evaluate) with that seed
-and N_CRAWL crawls replays the re-run exactly. The database is shared by every puzzle (see
-../supabase/schema.sql); a puzzle's re-run script handles its own
-PROJECT and scores it its own way (score()).
+and N_CRAWL crawls replays the re-run exactly. The database is shared by
+every puzzle (see ../supabase/schema.sql); a puzzle's re-run script handles
+its own PROJECT and scores it its own way (score()).
 
-The student's code runs in a container with no network, a read-only disk,
-no secrets and limited memory / time (child.py); N_WORKER of them share
-the crawls. The crawls stay out here: each taste is a round trip, so the
-hidden truth is never in reach.
+The student's code runs in a sandbox (../../shared/sandbox.py: no network,
+no secrets, a read-only system, limited memory and processes) under a time
+limit, through child.py; N_WORKER of them share the crawls. The crawls stay
+out here: each taste is a round trip, so the hidden truth is never in
+reach.
 
     python3 verify/verify.py                      re-run every waiting entry
     python3 verify/verify.py --local my_code.py   try one file, no database
     python3 verify/verify.py --count              how many are waiting
 
-Needs the image (from this puzzle's folder):
-
-    docker build -f verify/Dockerfile -t slice-crawl-verify .
-
-and, for the database, SUPABASE_URL and SUPABASE_SECRET_KEY in the
-environment (a secret / service_role key: never in the page).
+Needs bubblewrap (see sandbox.py) and, for the database, SUPABASE_URL and
+SUPABASE_SECRET_KEY in the environment (a secret / service_role key: never
+in the page).
 """
 import argparse
 import json
 import os
 import pathlib
 import secrets
-import subprocess
 import sys
-import threading
 import time
 import urllib.request
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import get_context
+from multiprocessing.connection import wait
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'py'))
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / 'py'))
+sys.path.insert(0, str(HERE.parent.parent / 'shared'))
 
+import sandbox
 from slice_crawl import MAX_TASTE, OFFICIAL, SliceCrawl, TooManySlices
 
 PROJECT = 'slice_crawl'
-IMAGE = 'slice-crawl-verify'
 N_CRAWL = 2000
 
-# containers per re-run, each playing every N_WORKER-th crawl: a GitHub
+# sandboxes per re-run, each playing every N_WORKER-th crawl: a GitHub
 # runner has 4 CPUs
 N_WORKER = 4
 
@@ -65,9 +63,10 @@ BUDGET_SEC = 100 * 60
 # load reply carries at most an error message
 MAX_LINE = 1 << 16
 
-DOCKER = ['docker', 'run', '--rm', '-i', '--network', 'none', '--read-only',
-          '--tmpfs', '/tmp:size=64m', '--memory', '1g', '--cpus', '1',
-          '--pids-limit', '64', '--cap-drop', 'ALL']
+# the sandbox's /verify: the child, and the puzzle code it imports
+FILES = {'child.py': HERE / 'child.py',
+         'runner.py': HERE.parent / 'py' / 'runner.py',
+         'slice_crawl.py': HERE.parent / 'py' / 'slice_crawl.py'}
 
 
 class Failed(Exception):
@@ -80,11 +79,11 @@ class Overtime(Failed):
 
 
 def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
-          image=IMAGE, timeout=TIMEOUT_SEC, n_worker=N_WORKER):
-    """ Run one estimator on n_crawl fresh official crawls, in containers.
+          timeout=TIMEOUT_SEC, n_worker=N_WORKER):
+    """ Run one estimator on n_crawl fresh official crawls, in sandboxes.
 
     Each of n_worker processes plays every n_worker-th crawl through its own
-    container. Crawl idx is slice_crawl.evaluate()'s crawl idx for the same
+    sandbox. Crawl idx is slice_crawl.evaluate()'s crawl idx for the same
     seed, so the score doesn't depend on n_worker and the Practice tab
     replays it.
 
@@ -93,7 +92,7 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
         helpers (dict): {filename: source} of helper .py files
         estimator (str): name of the estimator in that code
         seed (int | None): None draws a secret one (see SEED_BITS)
-        n_worker (int): containers run at once
+        n_worker (int): sandboxes run at once
 
     Returns:
         result (dict): {accuracy, mean_slices, median_slices, p90_slices,
@@ -105,51 +104,48 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
     if seed is None:
         seed = secrets.randbits(SEED_BITS)
     start = time.monotonic()
-    names = ['verify-' + secrets.token_hex(8) for _ in range(n_worker)]
-    timed_out = threading.Event()
+    # a process per sandbox, not a thread: the round trips are Python work,
+    # and threads would take turns at it
+    ctx = get_context('spawn')
+    workers, conns = [], []
+    for w in range(n_worker):
+        mine, theirs = ctx.Pipe(duplex=False)
+        proc = ctx.Process(target=work, daemon=True, args=(
+            theirs, main, helpers, estimator, range(w, n_crawl, n_worker),
+            seed))
+        proc.start()
+        theirs.close()
+        workers.append(proc)
+        conns.append(mine)
 
-    # a container outlives its docker client: kill them by name
-    def kill():
-        subprocess.run(['docker', 'kill', *names], stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL)
-
-    def expire():
-        timed_out.set()
-        kill()
-
-    timer = threading.Timer(timeout, expire)
-    timer.start()
-    # a process per container, not a thread: the round trips are Python
-    # work, and threads would take turns at it
-    pool = ProcessPoolExecutor(n_worker, mp_context=get_context('spawn'))
+    # the first failure stops every worker; the others' errors are only
+    # fallout
+    out, error = {}, None
     try:
-        jobs = [pool.submit(play, name, image, main, helpers, estimator,
-                            range(w, n_crawl, n_worker), seed)
-                for w, name in enumerate(names)]
-        out = {}
-        # the first failure kills every container; the others' errors are
-        # only fallout
-        error = None
-        for job in as_completed(jobs):
-            try:
-                out.update(job.result())
-            except Exception as exc:
-                if error is None:
-                    error = exc
-                    kill()
+        while conns and error is None:
+            left = start + timeout - time.monotonic()
+            ready = wait(conns, timeout=max(0, left))
+            if not ready:
+                raise Overtime(f'took over {timeout // 60} minutes for '
+                               f'{n_crawl} crawls')
+            for conn in ready:
+                conns.remove(conn)
+                try:
+                    ok, val = conn.recv()
+                except EOFError:
+                    ok, val = False, Failed('the re-run broke down')
+                if ok:
+                    out.update(val)
+                elif error is None:
+                    error = val
     finally:
-        timer.cancel()
-        pool.shutdown(cancel_futures=True)
-        kill()
-
-    # the kill at the time limit can cut any message short
-    if timed_out.is_set():
-        raise Overtime(f'took over {timeout // 60} minutes for {n_crawl} '
-                       'crawls')
-    if isinstance(error, Failed):
-        raise error
+        # a worker's sandbox dies with it (bwrap --die-with-parent)
+        for proc in workers:
+            proc.kill()
+        for proc in workers:
+            proc.join()
     if error is not None:
-        raise Failed(f'the re-run broke down ({type(error).__name__})')
+        raise error
 
     slices = [out[idx][0] for idx in range(n_crawl)]
     srt = sorted(slices)
@@ -161,11 +157,22 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
                 seconds=time.monotonic() - start)
 
 
-def play(name, image, main, helpers, estimator, idxs, seed):
-    """ Start container name, load the code in it, play crawls idxs.
+def work(conn, main, helpers, estimator, idxs, seed):
+    """ Run play() in a worker process, sending back (True, its result) or
+    (False, the Failed it raised). """
+    try:
+        conn.send((True, play(main, helpers, estimator, idxs, seed)))
+    except Failed as exc:
+        conn.send((False, exc))
+    except Exception as exc:
+        conn.send((False, Failed(f'the re-run broke down '
+                                 f'({type(exc).__name__})')))
+
+
+def play(main, helpers, estimator, idxs, seed):
+    """ Load the code in a sandbox, then play crawls idxs through it.
 
     Args:
-        name (str): the container's name, for rerun() to kill it by
         idxs (range): crawl indices to play
         seed (int): the re-run's seed
 
@@ -175,9 +182,7 @@ def play(name, image, main, helpers, estimator, idxs, seed):
     Raises:
         Failed: the code didn't load, raised or misbehaved
     """
-    proc = subprocess.Popen(DOCKER + ['--name', name, image],
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True)
+    proc = sandbox.start(FILES)
 
     def send(obj):
         proc.stdin.write(json.dumps(obj) + '\n')
@@ -256,6 +261,8 @@ def rpc(fn, body):
 def rerun_waiting():
     """ Re-run every entry waiting in the database, until none is
     left: entries posted mid-run are re-run too. """
+    # no sandbox, no re-run: the entries wait for one that has it
+    sandbox.check()
     start = time.monotonic()
     # (id, version) already re-run here: one whose result didn't save stays
     # pending, and is left to the next run rather than retried forever

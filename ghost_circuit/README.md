@@ -64,17 +64,17 @@ imports outside the browser too.
 
 `verify/verify.py` re-runs each waiting entry on 2000 circuits with a fresh
 53-bit seed, shown on the board once scored (the Practice tab with that
-seed and 2000 circuits replays it exactly), in a Docker container (`verify/Dockerfile`: no network,
-read-only disk, 1 GB / 1 CPU, 30 minutes). The container gets each
-circuit's `x` and `y` only (`verify/child.py`), never which devices are on
-it, and every reply is untrusted (bounded line, at most 150 device
+seed and 2000 circuits replays it exactly), in a sandbox
+(`../shared/sandbox.py`: no network, no secrets, read-only system, 2 GB,
+64 processes, 30 minutes). The sandbox gets each circuit's `x` and `y` only
+(`verify/child.py`), never which devices are on it, and every reply is untrusted (bounded line, at most 150 device
 numbers). Board: project `ghost_circuit`, every entry ranked, by highest
 F1.
 
-Try it on one file, no database (from this folder):
+Try it on one file, no database (from this folder; needs bubblewrap, see
+`../shared/sandbox.py`):
 
 ```sh
-docker build -f verify/Dockerfile -t ghost-circuit-verify .
 python3 verify/verify.py --local my_code.py --helper helpers.py
 ```
 
@@ -91,8 +91,7 @@ python3 verify/verify.py --local my_code.py --helper helpers.py
 | `py/runner.py` | load / run / replay / results for the student's code; TPR / FPR / F1 |
 | `py/ghost_circuit.py` | the notebook's circuit generator, `score()`, `evaluate()` |
 | `verify/verify.py` | re-run waiting entries, write back their scores |
-| `verify/child.py` | the student's side of a re-run, in the container |
-| `verify/Dockerfile` | the re-run container |
+| `verify/child.py` | the student's side of a re-run, in the sandbox |
 
 Shared with the other puzzles: `../shared/` (styles, Python worker handle,
 leaderboard, config, site bar) and `../supabase/schema.sql`.

@@ -29,6 +29,8 @@ worker, so Stop can kill an endless loop. Plain HTML/CSS/JS: no build step.
 | `shared/py.js` | a page's handle on its Python worker (call, stop) |
 | `shared/board.js` | leaderboard calls (Supabase RPC) and table, per `js/puzzle.js` |
 | `shared/version.js` | build stamp, overwritten at deploy |
+| `shared/sandbox.py` | the bubblewrap sandbox every re-run runs students' code in |
+| `shared/requirements.txt` | what that code may import |
 | `<puzzle>/` | a puzzle's page, simulator, runner and re-run (its README) |
 | `supabase/schema.sql` | the leaderboard database every puzzle shares |
 | `.github/workflows/pages.yml` | Pages deploy on every push to `main` |
@@ -37,8 +39,9 @@ worker, so Stop can kill an endless loop. Plain HTML/CSS/JS: no build step.
 ## Leaderboard
 
 The page posts code, never a score: each puzzle's `verify/verify.py`
-re-runs a waiting entry in a locked-down Docker container on fresh
-instances with a secret seed, and writes back the score the board shows.
+re-runs a waiting entry in a locked-down sandbox (`shared/sandbox.py`,
+bubblewrap) on fresh instances with a new seed, and writes back the score
+and seed the board shows.
 One Supabase database serves every puzzle: a **project** per puzzle, a
 **board** per class (a term or section) with its own code, which students
 need both to see the board and to post to it.
@@ -100,6 +103,5 @@ start with its id.
 
 Copy a puzzle folder, then change its simulator (`py/`), runner, page,
 `postmortem.js`, `puzzle.css`, `js/puzzle.js` and `verify/`; add it to
-`CONFIG.puzzles` and to the matrix in `verify.yml` (its image is
-`<id with dashes>-verify`), and add its project and a board in the
-database.
+`CONFIG.puzzles` and to the matrix in `verify.yml`, and add its project
+and a board in the database.

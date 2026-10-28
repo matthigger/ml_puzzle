@@ -49,16 +49,16 @@ Python, for testing.
 
 `verify/verify.py` re-runs each waiting entry on 2000 quakes with a fresh
 53-bit seed, shown on the board once scored (the Practice tab with that
-seed and 2000 quakes replays it exactly), in a Docker container (`verify/Dockerfile`: no network,
-read-only disk, no secrets, 1 GB / 1 CPU, 15 minutes) that gets each
-quake's stations and arrivals only (`verify/child.py`); the truth stays
-outside. Board: project `where_start`, ranked when within 5 km in at least
+seed and 2000 quakes replays it exactly), in a sandbox
+(`../shared/sandbox.py`: no network, no secrets, read-only system, 2 GB,
+64 processes, 15 minutes) that gets each quake's stations and arrivals only
+(`verify/child.py`); the truth stays outside. Board: project `where_start`, ranked when within 5 km in at least
 90% of quakes, by lowest mean distance.
 
-Try it on one file, no database (from this folder):
+Try it on one file, no database (from this folder; needs bubblewrap, see
+`../shared/sandbox.py`):
 
 ```sh
-docker build -f verify/Dockerfile -t where-start-verify .
 python3 verify/verify.py --local my_code.py --helper helpers.py
 ```
 
@@ -75,8 +75,7 @@ python3 verify/verify.py --local my_code.py --helper helpers.py
 | `py/runner.py` | load / run / replay the student's code |
 | `py/where_start.py` | the quake simulator and `evaluate()` |
 | `verify/verify.py` | re-run waiting entries, write back their scores |
-| `verify/child.py` | the student's side of a re-run, in the container |
-| `verify/Dockerfile` | the re-run container |
+| `verify/child.py` | the student's side of a re-run, in the sandbox |
 
 Shared with the other puzzles: `../shared/` (styles, Python worker handle,
 leaderboard, config, site bar) and `../supabase/schema.sql`.

@@ -1,4 +1,4 @@
-""" Runs inside the re-run container: the student's code, crawl by crawl
+""" Runs inside the re-run sandbox: the student's code, crawl by crawl
 
 Talks to verify.py over stdin / stdout, one JSON object per line. The crawls
 (and their hidden truth) live in verify.py; this side only ever sees the

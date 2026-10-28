@@ -1,4 +1,4 @@
-""" Run inside the re-run container: the student's code, circuit by circuit.
+""" Run inside the re-run sandbox: the student's code, circuit by circuit.
 
 Talks to verify.py over stdin / stdout, one JSON object per line. The
 circuits (and which devices are on them) live in verify.py; this side only

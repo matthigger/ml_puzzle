@@ -1,0 +1,6 @@
+# What a leaderboard entry's code may import in its re-run (sandbox.py).
+numpy
+scipy
+pandas
+scikit-learn
+matplotlib

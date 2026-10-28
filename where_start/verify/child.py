@@ -1,4 +1,4 @@
-"""Run inside the re-run container: the student's code, quake by quake.
+"""Run inside the re-run sandbox: the student's code, quake by quake.
 
 Talks to verify.py over stdin / stdout, one JSON object per line. The quakes
 (and their hidden truth) live in verify.py; this side only ever sees each
