@@ -64,6 +64,10 @@ class Failed(Exception):
     owner """
 
 
+class Overtime(Failed):
+    """ the re-run went over its time limit (TIMEOUT_SEC) """
+
+
 def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
           image=IMAGE, timeout=TIMEOUT_SEC):
     """ Run one estimator on n_crawl fresh official crawls, in a container.
@@ -111,8 +115,8 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
             raise Failed('the code printed too much')
         if not line:
             if not timer.is_alive():
-                raise Failed(f'took over {timeout // 60} minutes for '
-                             f'{n_crawl} crawls')
+                raise Overtime(f'took over {timeout // 60} minutes for '
+                               f'{n_crawl} crawls')
             raise Failed('the code stopped Python (out of memory?)')
         msg = json.loads(line)
         if not isinstance(msg, dict):
@@ -155,6 +159,9 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
     except Failed:
         raise
     except Exception as exc:
+        # the kill at the time limit can cut a message short
+        if not timer.is_alive():
+            raise Overtime(f'took over {timeout // 60} minutes')
         raise Failed(f'the re-run broke down ({type(exc).__name__})')
     finally:
         timer.cancel()
@@ -195,34 +202,55 @@ def rpc(fn, body):
 
 
 def rerun_waiting():
-    """ Re-run every entry waiting in the database, writing back each
-    score (or why it failed). """
-    entries = rpc('pending_entries', {'project': PROJECT})
-    print(f'{len(entries)} waiting')
+    """ Re-run every entry waiting in the database, until none is
+    left: entries posted mid-run are re-run too. """
     start = time.monotonic()
-    for e in entries:
-        if time.monotonic() - start + TIMEOUT_SEC > BUDGET_SEC:
-            print('out of time: the rest wait for the next run')
-            break
-        # any failure marks this entry failed, so a bad one can't stay
-        # pending and stop every later run
-        try:
-            src = e['source']
-            res = rerun(src['main'], src.get('helpers', {}), e['entry_point'])
-            metrics, qualifies, rank = score(res)
-            body = dict(status='done', error=None, metrics=metrics,
-                        qualifies=qualifies, rank=rank, seed=res['seed'])
-            note = (f'{res["accuracy"]:.1%} right, {res["mean_slices"]:.1f}'
-                    f' slices ({res["seconds"]:.0f} s)')
-        except Exception as exc:
-            msg = (str(exc) if isinstance(exc, Failed)
-                   else f'the re-run broke down ({type(exc).__name__})')
-            body = dict(status='failed', error=msg[:2000], metrics=None,
-                        qualifies=None, rank=None, seed=None)
-            note = 'failed: ' + (msg.strip().splitlines() or [''])[-1][:100]
-        rpc('set_result', dict(entry_id=e['id'], entry_version=e['version'],
-                               **body))
-        print(f'entry {e["id"]}: {note}')
+    # (id, version) already re-run here: one whose result didn't save stays
+    # pending, and is left to the next run rather than retried forever
+    tried = set()
+    while True:
+        entries = [e for e in rpc('pending_entries', {'project': PROJECT})
+                   if (e['id'], e['version']) not in tried]
+        if not entries:
+            return
+        print(f'{len(entries)} waiting')
+        for e in entries:
+            if time.monotonic() - start + TIMEOUT_SEC > BUDGET_SEC:
+                print('out of time: the rest wait for the next run')
+                return
+            tried.add((e['id'], e['version']))
+            rerun_entry(e)
+
+
+def rerun_entry(e):
+    """ Re-run one waiting entry, writing back its score (or why it
+    failed). """
+    # marks it running on the board; false if it was re-posted since, and
+    # the next pass runs the new version
+    if not rpc('start_entry', dict(entry_id=e['id'],
+                                   entry_version=e['version'])):
+        return
+    # any failure marks this entry failed, so a bad one can't stay
+    # pending and stop every later run
+    try:
+        src = e['source']
+        res = rerun(src['main'], src.get('helpers', {}), e['entry_point'])
+        metrics, qualifies, rank = score(res)
+        body = dict(status='done', error=None, metrics=metrics,
+                    qualifies=qualifies, rank=rank, seed=res['seed'])
+        note = (f'{res["accuracy"]:.1%} right, {res["mean_slices"]:.1f}'
+                f' slices ({res["seconds"]:.0f} s)')
+    except Exception as exc:
+        msg = (str(exc) if isinstance(exc, Failed)
+               else f'the re-run broke down ({type(exc).__name__})')
+        status = 'overtime' if isinstance(exc, Overtime) else 'failed'
+        body = dict(status=status, error=msg[:2000], metrics=None,
+                    qualifies=None, rank=None, seed=None)
+        note = (status + ': '
+                + (msg.strip().splitlines() or [''])[-1][:100])
+    rpc('set_result', dict(entry_id=e['id'], entry_version=e['version'],
+                           **body))
+    print(f'entry {e["id"]}: {note}')
 
 
 def main():
