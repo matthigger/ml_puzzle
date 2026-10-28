@@ -103,7 +103,9 @@ class SliceCrawl:
         mean = [mean[i] for i in order]
         sd = [sd[i] for i in order]
 
-        return cls(mean, sd, family=family, seed=rng.getrandbits(32))
+        # 64 bits: a 32-bit slice seed could be searched for from a few
+        # tastes, revealing every shop's typical rating
+        return cls(mean, sd, family=family, seed=rng.getrandbits(64))
 
     def taste(self, shop_idx):
         """ buys one slice from shop shop_idx, returns its rating (float) """

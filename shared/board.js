@@ -82,6 +82,8 @@ const Board = (function () {
   // with the reason
   function render(tbody, entries) {
     tbody.replaceChildren();
+    // the board's width: #, Name, Method, the scores, Updated
+    const nCol = tbody.parentNode.tHead.rows[0].cells.length;
     let rank = 0, section = null, mineWaiting = false;
     for (const e of entries) {
       const done = e.status === "done", clears = done && e.qualifies;
@@ -91,7 +93,7 @@ const Board = (function () {
         const tr = tbody.insertRow();
         tr.className = "gap";
         const td = tr.insertCell();
-        td.colSpan = 8;
+        td.colSpan = nCol;
         td.textContent = sec === "below" ? `Not at ${PUZZLE.bar} yet`
                                          : "Waiting for re-run";
       }
@@ -114,7 +116,7 @@ const Board = (function () {
         const td = add(e.status === "failed" ? "Your re-run failed: " + why
           : e.status === "overtime" ? "Your re-run " + why
           : e.started_at ? "Re-running now" : "Waiting for a re-run", "muted");
-        td.colSpan = 4;
+        td.colSpan = nCol - 4;
         if (e.error) td.title = e.error;
       }
       const [now, steps] = progress(e);

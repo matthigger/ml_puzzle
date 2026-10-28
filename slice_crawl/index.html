@@ -212,16 +212,18 @@ estimate = Racer(z=2.5).estimate</pre></li>
         <button type="submit" class="primary">Show</button>
       </form>
       <p id="board-title" class="board-title" hidden></p>
-      <p class="hint">Every score here is our own re-run: 5000 fresh crawls
-        of the official setup, on a seed nobody has seen. To add yours, use
-        <b>Add to leaderboard</b> on a row of the Practice tab's runs.</p>
+      <p class="hint">Every score here is our own re-run: 2000 fresh crawls
+        of the official setup, on a new seed, shown once it's scored. Run
+        2000 crawls with that seed on the Practice tab to replay it. To add
+        yours, use <b>Add to leaderboard</b> on a row of the Practice tab's
+        runs.</p>
       <div class="table-wrap" id="board-wrap" hidden>
         <table id="board" class="runs">
           <thead><tr>
             <th class="num">#</th><th>Name</th><th>Method</th>
             <th class="num">Right</th><th class="num">Avg slices</th>
             <th class="num">Median</th><th class="num">90th pct</th>
-            <th>Updated</th>
+            <th class="num">Seed</th><th>Updated</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -241,9 +243,9 @@ estimate = Racer(z=2.5).estimate</pre></li>
         <input id="post-code" required autocomplete="off" spellcheck="false"
           placeholder="from the assignment"></label>
       <p class="callout">We re-run this code on our end, on
-        <b>5000 fresh crawls with a new seed</b> nobody has seen. The board
-        shows that score, not this run's, so expect it to differ a little;
-        it usually appears within the hour.</p>
+        <b>2000 fresh crawls with a new seed</b> nobody has seen. The board
+        shows that score and its seed, not this run's, so expect it to
+        differ a little; it usually appears within a few minutes.</p>
       <p class="hint">Your code is saved with the entry, and only the
         instructor can see it. Adding another run later replaces your
         entry.</p>

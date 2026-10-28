@@ -2,14 +2,16 @@
 
 The page posts code, never a score. This script takes each slice_crawl
 entry still waiting, runs its estimator on N_CRAWL crawls of the official
-setup with a seed drawn here (and never shown), and writes back the score
-the board displays. The database is shared by every puzzle (see
+setup with a seed drawn here, and writes back the score the board displays,
+seed included: the Practice tab (or slice_crawl.evaluate) with that seed
+and N_CRAWL crawls replays the re-run exactly. The database is shared by every puzzle (see
 ../supabase/schema.sql); a puzzle's re-run script handles its own
 PROJECT and scores it its own way (score()).
 
 The student's code runs in a container with no network, a read-only disk,
-no secrets and limited memory / time (child.py). The crawls stay out here:
-each taste is a round trip, so the hidden truth is never in reach.
+no secrets and limited memory / time (child.py); N_WORKER of them share
+the crawls. The crawls stay out here: each taste is a round trip, so the
+hidden truth is never in reach.
 
     python3 verify/verify.py                      re-run every waiting entry
     python3 verify/verify.py --local my_code.py   try one file, no database
@@ -26,13 +28,14 @@ import argparse
 import json
 import os
 import pathlib
-import random
 import secrets
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import get_context
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'py'))
 
@@ -40,7 +43,15 @@ from slice_crawl import MAX_TASTE, OFFICIAL, SliceCrawl, TooManySlices
 
 PROJECT = 'slice_crawl'
 IMAGE = 'slice-crawl-verify'
-N_CRAWL = 5000
+N_CRAWL = 2000
+
+# containers per re-run, each playing every N_WORKER-th crawl: a GitHub
+# runner has 4 CPUs
+N_WORKER = 4
+
+# the secret seed: too many bits to search for from the slices tasted, and
+# few enough for a JavaScript number, so the Practice tab can replay it
+SEED_BITS = 53
 
 # wall-clock limit for one entry's whole re-run
 TIMEOUT_SEC = 15 * 60
@@ -69,15 +80,20 @@ class Overtime(Failed):
 
 
 def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
-          image=IMAGE, timeout=TIMEOUT_SEC):
-    """ Run one estimator on n_crawl fresh official crawls, in a container.
+          image=IMAGE, timeout=TIMEOUT_SEC, n_worker=N_WORKER):
+    """ Run one estimator on n_crawl fresh official crawls, in containers.
+
+    Each of n_worker processes plays every n_worker-th crawl through its own
+    container. Crawl idx is slice_crawl.evaluate()'s crawl idx for the same
+    seed, so the score doesn't depend on n_worker and the Practice tab
+    replays it.
 
     Args:
         main (str): the student's code
         helpers (dict): {filename: source} of helper .py files
         estimator (str): name of the estimator in that code
-        seed (int | None): None draws a secret one, 63 bits, too many to
-            search for from the slices tasted
+        seed (int | None): None draws a secret one (see SEED_BITS)
+        n_worker (int): containers run at once
 
     Returns:
         result (dict): {accuracy, mean_slices, median_slices, p90_slices,
@@ -87,21 +103,81 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
         Failed: the code didn't load, raised, looped or timed out
     """
     if seed is None:
-        seed = secrets.randbits(63)
+        seed = secrets.randbits(SEED_BITS)
     start = time.monotonic()
-    name = 'verify-' + secrets.token_hex(8)
+    names = ['verify-' + secrets.token_hex(8) for _ in range(n_worker)]
+    timed_out = threading.Event()
+
+    # a container outlives its docker client: kill them by name
+    def kill():
+        subprocess.run(['docker', 'kill', *names], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+
+    def expire():
+        timed_out.set()
+        kill()
+
+    timer = threading.Timer(timeout, expire)
+    timer.start()
+    # a process per container, not a thread: the round trips are Python
+    # work, and threads would take turns at it
+    pool = ProcessPoolExecutor(n_worker, mp_context=get_context('spawn'))
+    try:
+        jobs = [pool.submit(play, name, image, main, helpers, estimator,
+                            range(w, n_crawl, n_worker), seed)
+                for w, name in enumerate(names)]
+        out = {}
+        # the first failure kills every container; the others' errors are
+        # only fallout
+        error = None
+        for job in as_completed(jobs):
+            try:
+                out.update(job.result())
+            except Exception as exc:
+                if error is None:
+                    error = exc
+                    kill()
+    finally:
+        timer.cancel()
+        pool.shutdown(cancel_futures=True)
+        kill()
+
+    # the kill at the time limit can cut any message short
+    if timed_out.is_set():
+        raise Overtime(f'took over {timeout // 60} minutes for {n_crawl} '
+                       'crawls')
+    if isinstance(error, Failed):
+        raise error
+    if error is not None:
+        raise Failed(f'the re-run broke down ({type(error).__name__})')
+
+    slices = [out[idx][0] for idx in range(n_crawl)]
+    srt = sorted(slices)
+    return dict(accuracy=sum(right for _, right in out.values()) / n_crawl,
+                mean_slices=sum(slices) / n_crawl,
+                median_slices=srt[n_crawl // 2],
+                p90_slices=srt[min(n_crawl - 1, int(.9 * n_crawl))],
+                n_crawl=n_crawl, seed=seed,
+                seconds=time.monotonic() - start)
+
+
+def play(name, image, main, helpers, estimator, idxs, seed):
+    """ Start container name, load the code in it, play crawls idxs.
+
+    Args:
+        name (str): the container's name, for rerun() to kill it by
+        idxs (range): crawl indices to play
+        seed (int): the re-run's seed
+
+    Returns:
+        out (dict): {idx: (n_taste, right)} for each idx played
+
+    Raises:
+        Failed: the code didn't load, raised or misbehaved
+    """
     proc = subprocess.Popen(DOCKER + ['--name', name, image],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True)
-    # killing the docker client leaves its container running: kill that
-    # by name
-    def kill():
-        subprocess.run(['docker', 'kill', name], stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL)
-        proc.kill()
-
-    timer = threading.Timer(timeout, kill)
-    timer.start()
 
     def send(obj):
         proc.stdin.write(json.dumps(obj) + '\n')
@@ -114,9 +190,6 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
         if line and not line.endswith('\n'):
             raise Failed('the code printed too much')
         if not line:
-            if not timer.is_alive():
-                raise Overtime(f'took over {timeout // 60} minutes for '
-                               f'{n_crawl} crawls')
             raise Failed('the code stopped Python (out of memory?)')
         msg = json.loads(line)
         if not isinstance(msg, dict):
@@ -127,18 +200,14 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
         err = msg.get('error')
         return err if isinstance(err, str) and err.strip() else default
 
-    slices, correct = [], []
+    out = {}
     try:
         send(dict(main=main, helpers=helpers, estimator=estimator))
         msg = recv()
         if msg.get('ok') is not True:
             raise Failed(error(msg, 'the code did not load'))
-        for idx in range(n_crawl):
+        for idx in idxs:
             crawl = SliceCrawl.sample(**OFFICIAL, seed=seed * 1_000_003 + idx)
-            # sample() seeds the slices with 32 bits, few enough to recover
-            # from a few tastes (and with them every shop's mean): reseed
-            # from the whole secret
-            crawl._rng = random.Random(f'{seed}:{idx}')
             send({'n_shop': crawl.n_shop})
             while 't' in (msg := recv()):
                 try:
@@ -148,40 +217,23 @@ def rerun(main, helpers, estimator, n_crawl=N_CRAWL, seed=None,
             guess = msg.get('guess')
             if 'guess' not in msg:
                 raise Failed(error(msg, f'crawl {idx}: no guess'))
-            if (type(guess) is not int
-                    or not 0 <= guess < crawl.n_shop):
+            if type(guess) is not int or not 0 <= guess < crawl.n_shop:
                 raise Failed(f'crawl {idx}: guess {guess!r} is not a shop')
             if crawl.n_taste >= MAX_TASTE:
                 raise Failed(f'crawl {idx}: tasted too many slices without '
                              'naming a shop (an endless loop?)')
-            slices.append(crawl.n_taste)
-            correct.append(guess == crawl._best)
-    except Failed:
-        raise
-    except Exception as exc:
-        # the kill at the time limit can cut a message short
-        if not timer.is_alive():
-            raise Overtime(f'took over {timeout // 60} minutes')
-        raise Failed(f'the re-run broke down ({type(exc).__name__})')
+            out[idx] = (crawl.n_taste, guess == crawl._best)
     finally:
-        timer.cancel()
-        kill()
+        proc.kill()
         proc.wait()
-
-    srt = sorted(slices)
-    return dict(accuracy=sum(correct) / n_crawl,
-                mean_slices=sum(slices) / n_crawl,
-                median_slices=srt[n_crawl // 2],
-                p90_slices=srt[min(n_crawl - 1, int(.9 * n_crawl))],
-                n_crawl=n_crawl, seed=seed,
-                seconds=time.monotonic() - start)
+    return out
 
 
 def score(res):
     """ The board's view of a re-run: (metrics, qualifies, rank), rank lower
     is better among entries that qualify. """
     metrics = {k: res[k] for k in ('accuracy', 'mean_slices', 'median_slices',
-                                   'p90_slices', 'n_crawl')}
+                                   'p90_slices', 'n_crawl', 'seed')}
     return metrics, res['accuracy'] >= 0.95, res['mean_slices']
 
 

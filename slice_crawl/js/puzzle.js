@@ -4,7 +4,8 @@ const PUZZLE = {
   project: "slice_crawl",
   // the bar an entry must clear to be ranked
   bar: "95%",
-  // the board's four score columns, from a re-run's metrics
+  // the board's score columns, from a re-run's metrics: the seed replays
+  // it on the Practice tab (older re-runs have none)
   scores: m => [(100 * m.accuracy).toFixed(1) + "%", m.mean_slices.toFixed(1),
-                m.median_slices, m.p90_slices],
+                m.median_slices, m.p90_slices, m.seed ?? ""],
 };

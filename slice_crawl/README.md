@@ -55,10 +55,12 @@ one crawl. Test it outside the browser with plain Python by importing it.
 
 ## Leaderboard re-run
 
-`verify/verify.py` re-runs each waiting entry on 5000 crawls of the official
-setup with a secret 63-bit seed, in a Docker container (`verify/Dockerfile`:
-no network, read-only disk, no secrets, 1 GB / 1 CPU, 15 minutes). The
-crawls stay outside it and answer one taste at a time (`verify/child.py`),
+`verify/verify.py` re-runs each waiting entry on 2000 crawls of the official
+setup with a fresh 53-bit seed, split over 4 Docker containers
+(`verify/Dockerfile`: no network, read-only disk, no secrets, 1 GB / 1 CPU
+each, 15 minutes in all). The board shows the seed once scored: the
+Practice tab with that seed and 2000 crawls replays the re-run exactly. The
+crawls stay outside them and answer one taste at a time (`verify/child.py`),
 so the hidden truth is out of reach. Board: project `slice_crawl`, ranked
 when at least 95% right, by fewest average slices.
 
