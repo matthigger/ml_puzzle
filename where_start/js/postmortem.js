@@ -9,13 +9,14 @@
 //
 // The plot has a map of the region (stations, the epicenter, your
 // estimate), a close-up around the epicenter, and each station's residual
-// at your estimate.
+// at your estimate. Pressing or dragging on the map or close-up moves the
+// estimate there, with t0-hat refit to it, and redraws the residuals.
 //
 // Notation, the same in the table, the plot and their hover text: p is the
 // epicenter and t0 the origin time (hidden), p-hat and t0-hat your
 // estimate; station i at s_i recorded t_i; v = 6 km/s; r_i = t0-hat +
-// ||p-hat - s_i|| / v - t_i is its residual at your estimate; c_i its clock
-// error (0 when it works) and sigma the timing noise, both hidden.
+// ||p-hat - s_i|| / v - t_i is its residual at your estimate; sigma the
+// timing noise (hidden).
 
 const PostMortem = (function () {
   const NS = "http://www.w3.org/2000/svg";
@@ -83,8 +84,6 @@ const PostMortem = (function () {
       text: q => fmt(q.t0_error),
       help: `${DT}: your origin time minus the true one. Positive: ` +
             "you think it started later." },
-    { label: "Bad clocks", num: true, key: q => q.n_bad, text: q => q.n_bad,
-      help: "Stations whose clock is off by 5 to 10 s (hidden)." },
     { label: "Noise", html: '<i>σ</i> <span class="unit">(s)</span>', num: true, key: q => q.noise_sd,
       text: q => q.noise_sd.toFixed(2),
       help: "<i>σ</i>: timing noise at every station (hidden)." },
@@ -160,13 +159,12 @@ const PostMortem = (function () {
   const ZOOM = { x: 470, y: 22, w: 190 };                // close-up
   const RES = { x: 700, y: 22, w: 205, rowH: 0 };        // residual bars
 
-  // draws a station: a triangle, red when its clock is broken
-  function station(g, x, y, bad, label) {
+  // draws a station: a triangle
+  function station(g, x, y, label) {
     el("polygon", { points: `${x},${y - 7} ${x - 6.5},${y + 5} ${x + 6.5},${y + 5}`,
-                    class: "q-station" + (bad ? " bad" : "") }, g);
+                    class: "q-station" }, g);
     if (label) {
-      el("text", { x: x + 8, y: y - 4, class: "q-label" + (bad ? " bad" : "") },
-         g).textContent = label;
+      el("text", { x: x + 8, y: y - 4, class: "q-label" }, g).textContent = label;
     }
   }
 
@@ -185,17 +183,28 @@ const PostMortem = (function () {
     el("line", { x1: x - r, y1: y + r, x2: x + r, y2: y - r, class: cls }, g);
   }
 
-  // one square panel showing [x0, x0 + span] by [y0, y0 + span] km, y up
+  // one square panel showing [x0, x0 + span] by [y0, y0 + span] km, y up;
+  // km(sx, sy) maps an svg point back to km
   function panel(svg, box, x0, y0, span, id) {
     const s = box.w / span;
     const px = x => box.x + (x - x0) * s, py = y => box.y + box.w - (y - y0) * s;
+    const km = (sx, sy) => [x0 + (sx - box.x) / s, y0 + (box.y + box.w - sy) / s];
     el("rect", { x: box.x, y: box.y, width: box.w, height: box.w,
                  class: "q-panel" }, svg);
     const clip = el("clipPath", { id }, svg);
     el("rect", { x: box.x, y: box.y, width: box.w, height: box.w }, clip);
     const g = el("g", { "clip-path": `url(#${id})` }, svg);
-    return { g, px, py, s };
+    return { g, px, py, s, km };
   }
+
+  // r_i = t0-hat + ||p-hat - s_i|| / v - t_i at est = (x, y, t0)
+  const residuals = (res, [x, y, t0]) => res.stations.map(([sx, sy], i) =>
+    t0 + Math.hypot(x - sx, y - sy) / V - res.arrivals[i]);
+
+  // the t0-hat that best fits p-hat = (x, y): least squares in t0-hat is
+  // the mean of t_i - ||p-hat - s_i|| / v
+  const fitT0 = (res, x, y) => res.stations.reduce((sum, [sx, sy], i) =>
+    sum + res.arrivals[i] - Math.hypot(x - sx, y - sy) / V, 0) / res.arrivals.length;
 
   function ticks(svg, box, x0, y0, span, step) {
     const s = box.w / span;
@@ -214,123 +223,23 @@ const PostMortem = (function () {
     }
   }
 
+  // res.dragged (a dragged estimate) outlives a redraw, e.g. a toggle flip
   function plot(host, res, idx, circles) {
     host.replaceChildren();
     const n = res.arrivals.length;
-    const [px0, py0] = res.p, [ex, ey, et0] = res.est;
-    const err = Math.hypot(ex - px0, ey - py0), hit = err <= 5;
-    const bad = res.clock.map(c => c !== 0);
-    const badNames = bad.map((b, i) => b ? name(i) : null).filter(Boolean);
+    const [px0, py0] = res.p;
+    // during a drag the residual scale (lim) only widens, and the close-up's
+    // frame (zoom) holds if the drag began in it, so the estimate stays
+    // under the pointer
+    let drag = null, zoom = null, lim = 1, panels = {}, frame = 0;
 
     const head = document.createElement("p");
     head.className = "replay-head";
-    head.appendChild(badge(hit ? "hit" : "miss", hit ? "ok" : "bad"));
-    const dt = et0 - res.t0;
-    head.append(` Quake ${idx}: your estimate is ${err.toFixed(2)} km from ` +
-      `the epicenter, its start time ${Math.abs(dt).toFixed(2)} s ` +
-      `${dt >= 0 ? "late" : "early"}. ` +
-      (badNames.length ? `Broken clocks: ${badNames.join(", ")}.`
-                       : "Every clock works."));
     host.appendChild(head);
 
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "pm-plot",
       role: "img", "aria-label": `Quake ${idx}: stations, the epicenter and ` +
         "your estimate on a map, a close-up, and each station's residual" });
-
-    // ---- the map
-    const m = panel(svg, MAP, 0, 0, SIZE, "q-clip-map");
-    ticks(svg, MAP, 0, 0, SIZE, 50);
-    el("text", { x: MAP.x, y: MAP.y - 8, class: "q-title" }, svg).textContent =
-      "Map (km)";
-    if (circles) {
-      // where each station's recording puts the quake, given the true start
-      res.arrivals.forEach((t, i) => {
-        const r = V * (t - res.t0);
-        if (r <= 0) return;
-        el("circle", { cx: m.px(res.stations[i][0]), cy: m.py(res.stations[i][1]),
-                       r: r * m.s, class: "q-circle" + (bad[i] ? " bad" : "") }, m.g);
-      });
-    }
-    el("line", { x1: m.px(px0), y1: m.py(py0), x2: m.px(ex), y2: m.py(ey),
-                 class: "q-err" }, m.g);
-    // stations lie inside the region: unclipped, so edge labels show
-    res.stations.forEach(([x, y], i) => {
-      station(svg, m.px(x), m.py(y), bad[i], name(i));
-    });
-    // on top of the stations; the estimate may fall off the map: clipped
-    star(svg, m.px(px0), m.py(py0), 9);
-    cross(el("g", { "clip-path": "url(#q-clip-map)" }, svg),
-          m.px(ex), m.py(ey), 6, hit);
-
-    // ---- the close-up: the epicenter and your estimate, with room around
-    const half = Math.max(6.5, 0.7 * err);
-    const cx = (px0 + ex) / 2, cy = (py0 + ey) / 2;
-    const span = 2 * half, zx0 = cx - half, zy0 = cy - half;
-    const z = panel(svg, ZOOM, zx0, zy0, span, "q-clip-zoom");
-    const step = [1, 2, 5, 10, 20, 50, 100].find(v => span / v <= 5);
-    ticks(svg, ZOOM, zx0, zy0, span, step);
-    el("text", { x: ZOOM.x, y: ZOOM.y - 8, class: "q-title" }, svg).textContent =
-      "Close-up (km)";
-    // the 5 km hit radius
-    el("circle", { cx: z.px(px0), cy: z.py(py0), r: 5 * z.s, class: "q-hit" }, z.g);
-    if (circles) {
-      res.arrivals.forEach((t, i) => {
-        const r = V * (t - res.t0);
-        if (r <= 0) return;
-        el("circle", { cx: z.px(res.stations[i][0]), cy: z.py(res.stations[i][1]),
-                       r: r * z.s, class: "q-circle" + (bad[i] ? " bad" : "") }, z.g);
-      });
-    }
-    el("line", { x1: z.px(px0), y1: z.py(py0), x2: z.px(ex), y2: z.py(ey),
-                 class: "q-err" }, z.g);
-    res.stations.forEach(([x, y], i) => {
-      if (Math.abs(x - cx) <= half && Math.abs(y - cy) <= half) {
-        station(z.g, z.px(x), z.py(y), bad[i], name(i));
-      }
-    });
-    star(z.g, z.px(px0), z.py(py0), 10);
-    cross(z.g, z.px(ex), z.py(ey), 7, hit);
-    const facts = [
-      `p = (${px0.toFixed(1)}, ${py0.toFixed(1)}), t₀ = ${res.t0.toFixed(2)} s`,
-      `p̂ = (${ex.toFixed(1)}, ${ey.toFixed(1)}), t̂₀ = ${et0.toFixed(2)} s`,
-      `‖p̂ − p‖ = ${err.toFixed(2)} km`,
-      `σ = ${res.noise_sd.toFixed(2)} s`,
-    ];
-    facts.forEach((t, k) => {
-      el("text", { x: ZOOM.x, y: ZOOM.y + ZOOM.w + 42 + 19 * k,
-                   class: "pm-note" + (k === 1 ? "" : " truth") }, svg).textContent = t;
-    });
-
-    // ---- residuals: r_i at your estimate; a broken clock shows up as one
-    // big bar (about -c_i), when the estimate is right
-    const rowH = Math.min(28, (H - 70) / n);
-    const lim = Math.max(1, ...res.resid.map(Math.abs), ...res.clock.map(Math.abs));
-    const mid = RES.x + 22 + (RES.w - 22) / 2, half2 = (RES.w - 22) / 2 - 4;
-    const bx = v => mid + v / lim * half2;
-    el("text", { x: RES.x, y: RES.y - 8, class: "q-title" }, svg).textContent =
-      "Residual rᵢ (s)";
-    const bottom = RES.y + n * rowH;
-    el("line", { x1: mid, x2: mid, y1: RES.y, y2: bottom, class: "q-zero" }, svg);
-    res.resid.forEach((r, i) => {
-      const y = RES.y + i * rowH;
-      el("text", { x: RES.x, y: y + rowH / 2 + 4, class: "q-label" + (bad[i] ? " bad" : "") },
-         svg).textContent = name(i);
-      const bar = el("rect", { x: Math.min(bx(0), bx(r)), y: y + 4,
-        width: Math.max(1, Math.abs(bx(r) - bx(0))), height: rowH - 8,
-        class: "q-bar" + (bad[i] ? " bad" : "") }, svg);
-      el("title", {}, bar).textContent = `station ${name(i)}: r = ${fmt(r)} s` +
-        (bad[i] ? `, clock off by ${fmt(res.clock[i])} s` : "");
-      if (bad[i]) {
-        // where the bar would end at the true answer: -c_i
-        const x = bx(-res.clock[i]);
-        el("line", { x1: x, x2: x, y1: y + 1, y2: y + rowH - 1, class: "q-clock" }, svg);
-      }
-    });
-    for (const v of [-lim, 0, lim]) {
-      el("text", { x: bx(v), y: bottom + 16, "text-anchor": "middle",
-                   class: "pm-ticklabel" }, svg).textContent = fmt(v, 1);
-    }
-
     const wrap = document.createElement("div");
     wrap.className = "pm-plot-wrap";
     wrap.appendChild(svg);
@@ -338,29 +247,175 @@ const PostMortem = (function () {
 
     const key = document.createElement("div");
     key.className = "key";
-    key.innerHTML =
-      '<span><svg width="14" height="13" viewBox="0 0 14 13"><polygon ' +
-      'class="q-station" points="7,1 1,12 13,12"/></svg>station</span>' +
-      '<span><svg width="14" height="13" viewBox="0 0 14 13"><polygon ' +
-      'class="q-station bad" points="7,1 1,12 13,12"/></svg>broken clock</span>' +
-      '<span><svg width="16" height="16" viewBox="0 0 16 16"><polygon ' +
-      'class="q-true" points="8,0 10,6 16,6 11,10 13,16 8,12 3,16 5,10 0,6 ' +
-      '6,6"/></svg>epicenter <i>p</i></span>' +
-      '<span><svg width="14" height="14" viewBox="0 0 14 14"><path ' +
-      `class="q-est ${hit ? "ok" : "bad"}" d="M2,2 L12,12 M2,12 L12,2"/></svg>` +
-      "your estimate <i>p̂</i></span>" +
-      (circles ? '<span><i class="ln q-circ"></i>arrival circle</span>' : "") +
-      '<span><i class="ln q-hitln"></i>5 km</span>' +
-      '<span><i class="ln q-clockln"></i>−<i>c<sub>i</sub></i></span>';
     host.appendChild(key);
 
     const note = document.createElement("p");
     note.className = "hint";
-    note.textContent = "Arrival circle: radius v(tᵢ − t₀) around station i, " +
-      "using the true start; working clocks' circles meet at p. Residual " +
-      "rᵢ = t̂₀ + ‖p̂ − sᵢ‖ / v − tᵢ at your estimate; at the true answer, " +
-      "a broken clock's bar would end at −cᵢ (its clock error, black tick).";
+    note.textContent = "Press or drag on the map or close-up to move p̂: " +
+      "t̂₀ refits to it (the mean of tᵢ − ‖p̂ − sᵢ‖ / v) and the residuals " +
+      "follow. Arrival circle: radius v(tᵢ − t₀) around station i, using " +
+      "the true start; the circles meet near p. Residual " +
+      "rᵢ = t̂₀ + ‖p̂ − sᵢ‖ / v − tᵢ at the estimate.";
     host.appendChild(note);
+
+    function draw() {
+      const est = res.dragged || res.est, moved = !!res.dragged;
+      const [ex, ey, et0] = est;
+      const err = Math.hypot(ex - px0, ey - py0), hit = err <= 5;
+      const resid = moved ? residuals(res, est) : res.resid;
+
+      head.replaceChildren(badge(hit ? "hit" : "miss", hit ? "ok" : "bad"));
+      const dt = et0 - res.t0;
+      head.append(` Quake ${idx}: ${moved ? "the dragged" : "your"} ` +
+        `estimate is ${err.toFixed(2)} km from the epicenter, its start ` +
+        `time ${Math.abs(dt).toFixed(2)} s ${dt >= 0 ? "late" : "early"}.`);
+      if (moved) {
+        const back = document.createElement("button");
+        back.className = "quiet";
+        back.textContent = "Back to your estimate";
+        back.onclick = () => { delete res.dragged; draw(); };
+        head.append(" ", back);
+      }
+
+      svg.replaceChildren();
+      // ---- the map
+      const m = panel(svg, MAP, 0, 0, SIZE, "q-clip-map");
+      ticks(svg, MAP, 0, 0, SIZE, 50);
+      el("text", { x: MAP.x, y: MAP.y - 8, class: "q-title" }, svg).textContent =
+        "Map (km)";
+      if (circles) {
+        // where each station's recording puts the quake, given the true start
+        res.arrivals.forEach((t, i) => {
+          const r = V * (t - res.t0);
+          if (r <= 0) return;
+          el("circle", { cx: m.px(res.stations[i][0]), cy: m.py(res.stations[i][1]),
+                         r: r * m.s, class: "q-circle" }, m.g);
+        });
+      }
+      el("line", { x1: m.px(px0), y1: m.py(py0), x2: m.px(ex), y2: m.py(ey),
+                   class: "q-err" }, m.g);
+      // stations lie inside the region: unclipped, so edge labels show
+      res.stations.forEach(([x, y], i) => station(svg, m.px(x), m.py(y), name(i)));
+      // on top of the stations; the estimate may fall off the map: clipped
+      star(svg, m.px(px0), m.py(py0), 9);
+      cross(el("g", { "clip-path": "url(#q-clip-map)" }, svg),
+            m.px(ex), m.py(ey), 6, hit);
+
+      // ---- the close-up: the epicenter and the estimate, with room around;
+      // still while a drag that began in it is on
+      if (drag !== "zoom") {
+        zoom = { half: Math.max(6.5, 0.7 * err), cx: (px0 + ex) / 2, cy: (py0 + ey) / 2 };
+      }
+      const { half, cx, cy } = zoom;
+      const span = 2 * half, zx0 = cx - half, zy0 = cy - half;
+      const z = panel(svg, ZOOM, zx0, zy0, span, "q-clip-zoom");
+      const step = [1, 2, 5, 10, 20, 50, 100].find(v => span / v <= 5);
+      ticks(svg, ZOOM, zx0, zy0, span, step);
+      el("text", { x: ZOOM.x, y: ZOOM.y - 8, class: "q-title" }, svg).textContent =
+        "Close-up (km)";
+      // the 5 km hit radius
+      el("circle", { cx: z.px(px0), cy: z.py(py0), r: 5 * z.s, class: "q-hit" }, z.g);
+      if (circles) {
+        res.arrivals.forEach((t, i) => {
+          const r = V * (t - res.t0);
+          if (r <= 0) return;
+          el("circle", { cx: z.px(res.stations[i][0]), cy: z.py(res.stations[i][1]),
+                         r: r * z.s, class: "q-circle" }, z.g);
+        });
+      }
+      el("line", { x1: z.px(px0), y1: z.py(py0), x2: z.px(ex), y2: z.py(ey),
+                   class: "q-err" }, z.g);
+      res.stations.forEach(([x, y], i) => {
+        if (Math.abs(x - cx) <= half && Math.abs(y - cy) <= half) {
+          station(z.g, z.px(x), z.py(y), name(i));
+        }
+      });
+      star(z.g, z.px(px0), z.py(py0), 10);
+      cross(z.g, z.px(ex), z.py(ey), 7, hit);
+      const facts = [
+        `p = (${px0.toFixed(1)}, ${py0.toFixed(1)}), t₀ = ${res.t0.toFixed(2)} s`,
+        `p̂ = (${ex.toFixed(1)}, ${ey.toFixed(1)}), t̂₀ = ${et0.toFixed(2)} s`,
+        `‖p̂ − p‖ = ${err.toFixed(2)} km`,
+        `σ = ${res.noise_sd.toFixed(2)} s`,
+      ];
+      facts.forEach((t, k) => {
+        el("text", { x: ZOOM.x, y: ZOOM.y + ZOOM.w + 42 + 19 * k,
+                     class: "pm-note" + (k === 1 ? "" : " truth") }, svg).textContent = t;
+      });
+
+      // ---- residuals: r_i at the estimate; a drag only widens the scale
+      const rowH = Math.min(28, (H - 70) / n);
+      const need = Math.max(1, ...resid.map(Math.abs));
+      lim = drag ? Math.max(lim, need) : need;
+      const mid = RES.x + 22 + (RES.w - 22) / 2, half2 = (RES.w - 22) / 2 - 4;
+      const bx = v => mid + v / lim * half2;
+      el("text", { x: RES.x, y: RES.y - 8, class: "q-title" }, svg).textContent =
+        "Residual rᵢ (s)";
+      const bottom = RES.y + n * rowH;
+      el("line", { x1: mid, x2: mid, y1: RES.y, y2: bottom, class: "q-zero" }, svg);
+      resid.forEach((r, i) => {
+        const y = RES.y + i * rowH;
+        el("text", { x: RES.x, y: y + rowH / 2 + 4, class: "q-label" }, svg)
+          .textContent = name(i);
+        const bar = el("rect", { x: Math.min(bx(0), bx(r)), y: y + 4,
+          width: Math.max(1, Math.abs(bx(r) - bx(0))), height: rowH - 8,
+          class: "q-bar" }, svg);
+        el("title", {}, bar).textContent = `station ${name(i)}: r = ${fmt(r)} s`;
+      });
+      for (const v of [-lim, 0, lim]) {
+        el("text", { x: bx(v), y: bottom + 16, "text-anchor": "middle",
+                     class: "pm-ticklabel" }, svg).textContent = fmt(v, 1);
+      }
+
+      // last, so they take the presses
+      for (const [id, box] of [["map", MAP], ["zoom", ZOOM]]) {
+        el("rect", { x: box.x, y: box.y, width: box.w, height: box.w,
+                     class: "q-drag", "data-panel": id }, svg);
+      }
+      panels = { map: m, zoom: z };
+
+      key.innerHTML =
+        '<span><svg width="14" height="13" viewBox="0 0 14 13"><polygon ' +
+        'class="q-station" points="7,1 1,12 13,12"/></svg>station</span>' +
+        '<span><svg width="16" height="16" viewBox="0 0 16 16"><polygon ' +
+        'class="q-true" points="8,0 10,6 16,6 11,10 13,16 8,12 3,16 5,10 0,6 ' +
+        '6,6"/></svg>epicenter <i>p</i></span>' +
+        '<span><svg width="14" height="14" viewBox="0 0 14 14"><path ' +
+        `class="q-est ${hit ? "ok" : "bad"}" d="M2,2 L12,12 M2,12 L12,2"/></svg>` +
+        `${moved ? "dragged" : "your"} estimate <i>p̂</i></span>` +
+        (circles ? '<span><i class="ln q-circ"></i>arrival circle</span>' : "") +
+        '<span><i class="ln q-hitln"></i>5 km</span>';
+    }
+
+    // moves the estimate to the pointer, in the panel the drag began in;
+    // one redraw per animation frame
+    function moveTo(e) {
+      const pt = new DOMPoint(e.clientX, e.clientY)
+        .matrixTransform(svg.getScreenCTM().inverse());
+      const [x, y] = panels[drag].km(pt.x, pt.y);
+      res.dragged = [x, y, fitT0(res, x, y)];
+      if (!frame) frame = requestAnimationFrame(() => { frame = 0; draw(); });
+    }
+    svg.addEventListener("pointerdown", e => {
+      const id = e.target.getAttribute && e.target.getAttribute("data-panel");
+      if (!id || e.button > 0) return;
+      e.preventDefault();
+      drag = id;
+      svg.setPointerCapture(e.pointerId);
+      moveTo(e);
+    });
+    svg.addEventListener("pointermove", e => { if (drag) moveTo(e); });
+    const end = () => {
+      if (!drag) return;
+      drag = null;
+      cancelAnimationFrame(frame);
+      frame = 0;
+      draw();
+    };
+    svg.addEventListener("pointerup", end);
+    svg.addEventListener("pointercancel", end);
+
+    draw();
   }
 
   return { table, mark, plot };

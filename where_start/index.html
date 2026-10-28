@@ -29,8 +29,8 @@
       <p class="goal"><b>Goal:</b> land within 5 km of the epicenter in at
         least 90% of quakes, and as close as you can on average.</p>
       <p>Each quake: 12 stations scattered over a 200 km by 200 km region
-        record when the shock wave (6 km/s) reaches them; up to 3 clocks
-        are off by seconds. <code>estimate(stations, arrivals)</code> gets
+        record when the shock wave (6 km/s) reaches them, a little noisily.
+        <code>estimate(stations, arrivals)</code> gets
         the <code>(12, 2)</code> station positions (km) and the
         <code>(12,)</code> arrival times (s), and returns
         <code>(x, y, t0)</code>. Everything runs here in your browser, and
@@ -126,7 +126,7 @@ estimate = Locator(n_start=8).estimate</pre></li>
         <label class="field"><span>Seed</span>
           <input id="seed" type="number" min="0" value="0"></label>
         <p class="hint">Each quake draws new stations, epicenter, start
-          time, timing noise and broken clocks. The same seed gives the
+          time and timing noise. The same seed gives the
           same quakes, whatever the estimator.</p>
         <div class="buttons run-row">
           <button id="run-btn" class="primary" disabled>Run</button>

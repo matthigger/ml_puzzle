@@ -10,7 +10,7 @@ PROJECT and scores it its own way (score()).
 The student's code runs in a container with no network, a read-only disk,
 no secrets and limited memory / time (child.py). The quakes stay out here:
 the container gets each quake's stations and arrival times, never its
-epicenter, origin time or clock errors.
+epicenter or origin time.
 
     python3 verify/verify.py                      re-run every waiting entry
     python3 verify/verify.py --local my_code.py   try one file, no database

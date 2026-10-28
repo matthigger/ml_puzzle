@@ -228,8 +228,7 @@ def load(source, helpers):
 
 def setup_of(setup):
     """Return the quake setup's sample() keywords from the page's setup."""
-    return dict(n_station=setup.get('n_station', 12),
-                max_bad=setup.get('max_bad', 3))
+    return dict(n_station=setup.get('n_station', 12))
 
 
 def call(estimate, quake, idx):
@@ -252,7 +251,7 @@ def run(name, setup, progress=None, every=100):
 
     Args:
         name (str): an estimator listed by load(), or a key of BASELINES
-        setup (str): JSON {n_quake, seed, n_station?, max_bad?}
+        setup (str): JSON {n_quake, seed, n_station?}
         progress (Callable): progress(done, n_quake, n_hit, total_km), if
             given, is called every few quakes
         every (int): quakes between progress calls
@@ -261,15 +260,15 @@ def run(name, setup, progress=None, every=100):
         JSON {ok, error} plus, when ok: hit_rate, hit_se, mean_km,
             median_km, p90_km, seconds, and per quake (n_quake,) lists:
             x, y, t0 (truth), x_hat, y_hat, t0_hat (estimate), error_km
-            (||p_hat - p||), t0_error (t0_hat - t0), n_bad (broken
-            clocks), noise_sd (timing noise sd, s), max_resid (largest
-            |predicted - recorded arrival| at the estimate, s)
+            (||p_hat - p||), t0_error (t0_hat - t0), noise_sd (timing
+            noise sd, s), max_resid (largest |predicted - recorded
+            arrival| at the estimate, s)
     """
     setup = json.loads(setup)
     estimate = lookup(name)
     n_quake, seed = setup['n_quake'], setup['seed']
     keys = ('x', 'y', 't0', 'x_hat', 'y_hat', 't0_hat', 'error_km',
-            't0_error', 'n_bad', 'noise_sd', 'max_resid')
+            't0_error', 'noise_sd', 'max_resid')
     out = {k: [] for k in keys}
     n_hit, total = 0, 0.0
     start = time.perf_counter()
@@ -278,11 +277,10 @@ def run(name, setup, progress=None, every=100):
             q = sample(seed, idx, **setup_of(setup))
             est = call(estimate, q, idx)
             err = math.dist(est[:2], q._p)
-            vals = (*q._p, q._t0, *est, err, est[2] - q._t0,
-                    int(np.count_nonzero(q._clock)), q._noise_sd,
+            vals = (*q._p, q._t0, *est, err, est[2] - q._t0, q._noise_sd,
                     float(np.abs(q.residual(est)).max()))
             for k, v in zip(keys, vals):
-                out[k].append(float(v) if k != 'n_bad' else v)
+                out[k].append(float(v))
             n_hit += err <= HIT_KM
             total += err
             if progress is not None and (idx + 1) % every == 0:
@@ -305,9 +303,8 @@ def replay(name, setup, idx):
 
     Returns:
         JSON {ok, error} plus, when ok: stations (n_station, 2), arrivals
-            (n_station,), p (2,) and t0 (truth), clock (n_station,) clock
-            errors (0: working), noise_sd, est (x, y, t0), resid
-            (n_station,) predicted minus recorded arrival at est, s
+            (n_station,), p (2,) and t0 (truth), noise_sd, est (x, y, t0),
+            resid (n_station,) predicted minus recorded arrival at est, s
     """
     setup = json.loads(setup)
     q = sample(setup['seed'], idx, **setup_of(setup))
@@ -318,5 +315,5 @@ def replay(name, setup, idx):
     return json.dumps(dict(
         ok=True, error=None, stations=q.stations.tolist(),
         arrivals=q.arrivals.tolist(), p=q._p.tolist(), t0=q._t0,
-        clock=q._clock.tolist(), noise_sd=q._noise_sd, est=est,
+        noise_sd=q._noise_sd, est=est,
         resid=q.residual(est).tolist()))

@@ -2,9 +2,8 @@
 
 Each quake hides an epicenter p = (x, y) (km) and an origin time t0 (s) in a
 200 km by 200 km region. Its shock wave travels at V km/s, so station i at
-s_i hears it at t0 + ||p - s_i|| / V, plus timing noise; a few stations
-have broken clocks, off by seconds. An estimator sees only the stations and
-their arrival times, and returns (x, y, t0).
+s_i hears it at t0 + ||p - s_i|| / V, plus timing noise. An estimator sees
+only the stations and their arrival times, and returns (x, y, t0).
 
     from where_start import evaluate
 
@@ -27,8 +26,8 @@ V = 6.0
 # side of the square region, km
 SIZE = 200.0
 
-# the graded setup: stations per quake, most broken clocks per quake
-OFFICIAL = dict(n_station=12, max_bad=3)
+# the graded setup: stations per quake
+OFFICIAL = dict(n_station=12)
 
 # an estimate within this many km of the epicenter is a hit
 HIT_KM = 5.0
@@ -52,10 +51,9 @@ class Quake:
         _p (np.array): (2,) epicenter, km
         _t0 (float): origin time, s
         _noise_sd (float): timing noise sd at every station, s
-        _clock (np.array): (n_station,) clock error, s; 0 where it works
     """
 
-    def __init__(self, stations, p, t0, noise_sd, clock, seed=None):
+    def __init__(self, stations, p, t0, noise_sd, seed=None):
         """Record the quake at every station.
 
         Args:
@@ -68,36 +66,29 @@ class Quake:
         self._p = np.asarray(p, dtype=float)
         self._t0 = float(t0)
         self._noise_sd = float(noise_sd)
-        self._clock = np.asarray(clock, dtype=float)
         dist = np.linalg.norm(self.stations - self._p, axis=1)
-        self.arrivals = (self._t0 + dist / V + self._clock
+        self.arrivals = (self._t0 + dist / V
                          + rng.normal(0, self._noise_sd, self.n_station))
 
     @classmethod
-    def sample(cls, seed=None, n_station=12, max_bad=3):
+    def sample(cls, seed=None, n_station=12):
         """Draw a random quake.
 
         Stations and epicenter are uniform over the region, t0 uniform in
-        0..10 s, timing noise sd log-uniform in 0.1..0.4 s, and 0 to max_bad
-        stations (uniform) get a clock error of 5 to 10 s, either sign.
+        0..10 s, timing noise sd log-uniform in 0.1..0.4 s.
 
         Args:
             seed (int | list | None): seeds the quake and its recordings
             n_station (int): stations recording it
-            max_bad (int): most broken clocks
         """
         rng = np.random.default_rng(seed)
         stations = rng.uniform(0, SIZE, (n_station, 2))
         p = rng.uniform(0, SIZE, 2)
         t0 = rng.uniform(0, 10)
         noise_sd = math.exp(rng.uniform(math.log(.1), math.log(.4)))
-        clock = np.zeros(n_station)
-        n_bad = int(rng.integers(0, max_bad + 1))
-        bad = rng.choice(n_station, n_bad, replace=False)
-        clock[bad] = rng.choice([-1, 1], n_bad) * rng.uniform(5, 10, n_bad)
         # the noise continues this stream: a small sub-seed could be
         # searched for from the arrivals, revealing the truth
-        return cls(stations, p, t0, noise_sd, clock, seed=rng)
+        return cls(stations, p, t0, noise_sd, seed=rng)
 
     def residual(self, theta):
         """Return predicted minus recorded arrival at each station.
@@ -134,17 +125,16 @@ def check_estimate(est):
     return tuple(vals)
 
 
-def sample(seed, idx, n_station=12, max_bad=3):
+def sample(seed, idx, n_station=12):
     """Return quake idx of a seed: the same quakes evaluate() uses.
 
     Seeded with [seed, idx], every bit of seed counts (the re-run's secret
     seed has 63).
     """
-    return Quake.sample([seed, idx], n_station, max_bad)
+    return Quake.sample([seed, idx], n_station)
 
 
-def evaluate(estimate, n_quake=1000, seed=0, n_station=12, max_bad=3,
-             verbose=True):
+def evaluate(estimate, n_quake=1000, seed=0, n_station=12, verbose=True):
     """Run estimate on n_quake random quakes; summarize its errors.
 
     Args:
@@ -159,7 +149,7 @@ def evaluate(estimate, n_quake=1000, seed=0, n_station=12, max_bad=3,
     """
     err, dt = [], []
     for idx in range(n_quake):
-        q = sample(seed, idx, n_station, max_bad)
+        q = sample(seed, idx, n_station)
         x, y, t0 = check_estimate(estimate(q.stations.copy(),
                                            q.arrivals.copy()))
         err.append(math.dist((x, y), q._p))

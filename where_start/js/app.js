@@ -6,7 +6,7 @@
   const $ = id => document.getElementById(id);
   const pct = v => (100 * v).toFixed(1) + "%";
   const BASELINES = ["first to hear it", "first three"];
-  const OFFICIAL = { n_station: 12, max_bad: 3 };
+  const OFFICIAL = { n_station: 12 };
   // a hit: within HIT_KM of the epicenter; the bar: hits in HIT_BAR of
   // quakes (py/where_start.py)
   const HIT_KM = 5, HIT_BAR = 0.9;
@@ -67,7 +67,7 @@ def estimate(stations, arrivals):
   let mainFile = store.get("mainFile", null);
   let shownUpload = null;                   // the file shown in files mode
   // run records: {id, name, estimator, baseline, code: {main, helpers,
-  // mainName?} | null, n_station, max_bad, n_quake, seed, hit_rate, hit_se,
+  // mainName?} | null, n_station, n_quake, seed, hit_rate, hit_se,
   // mean_km, median_km, p90_km, seconds, when}
   let runs = store.get("runs", []);
   let selectedId = store.get("selected", null);
@@ -270,7 +270,7 @@ def estimate(stations, arrivals):
     }
     const rec = {
       id: Date.now() + Math.random(), name: label, estimator: name, baseline,
-      code, n_station: setup.n_station, max_bad: setup.max_bad,
+      code, n_station: setup.n_station,
       n_quake: setup.n_quake, seed: setup.seed,
       hit_rate: res.hit_rate, hit_se: res.hit_se, mean_km: res.mean_km,
       median_km: res.median_km, p90_km: res.p90_km,
@@ -496,7 +496,7 @@ def estimate(stations, arrivals):
   // memory and, space allowing, in localStorage; when missing, rebuilt by
   // re-running the run.
   const QUAKE_KEYS = ["x", "y", "t0", "x_hat", "y_hat", "t0_hat", "error_km",
-                      "t0_error", "n_bad", "noise_sd", "max_resid"];
+                      "t0_error", "noise_sd", "max_resid"];
   const details = new Map();
   const detailKey = id => "where_start.detail." + id;
   const round3 = v => Math.round(v * 1000) / 1000;
@@ -665,7 +665,7 @@ def estimate(stations, arrivals):
   let pmQuake = null;   // the quake plotted
   let pmShown = null;   // {res, idx} of the plot, redrawn when a toggle flips
 
-  const setupOf = r => ({ n_station: r.n_station, max_bad: r.max_bad,
+  const setupOf = r => ({ n_station: r.n_station,
                           n_quake: r.n_quake, seed: r.seed });
 
   // the quakes table for run r: rebuilt only when the run, sort or filter

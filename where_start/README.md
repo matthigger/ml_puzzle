@@ -13,9 +13,8 @@ leaderboard.
 
 - **The quakes.** `py/where_start.py` draws each one from a seed: 12
   stations uniform over a 200 km square, an epicenter uniform over it, a
-  start time in 0..10 s, timing noise sd log-uniform in 0.1..0.4 s, and 0
-  to 3 broken clocks (off by 5 to 10 s, either sign). Waves travel at
-  6 km/s. The estimator gets `stations` (12, 2) km and `arrivals` (12,) s
+  start time in 0..10 s and timing noise sd log-uniform in 0.1..0.4 s.
+  Waves travel at 6 km/s. The estimator gets `stations` (12, 2) km and `arrivals` (12,) s
   and returns `(x, y, t0)`.
 - **Scoring.** Error is `||p_hat - p||` in km. A hit is within 5 km; the
   bar is hits in 90% of quakes, then the lower mean error wins.
@@ -23,13 +22,14 @@ leaderboard.
   `(stations, arrivals)` is listed), name the run, set quakes (default
   200) and seed. Each row keeps its code. Clicking a row opens its
   post-mortem: the code, a sortable table with a row per quake (hit or
-  miss, error, start-time error, broken clocks, noise, worst residual;
+  miss, error, start-time error, noise, worst residual;
   "misses only" filters it), "Download results" (a tidy CSV, a row per
   quake: run, estimator, seed, quake, truth, estimate, errors, so runs
   concatenate in pandas), and for the quake clicked: a map (stations,
-  broken clocks in red, epicenter, estimate, optional arrival circles), a
-  close-up with the 5 km hit radius, and each station's residual at the
-  estimate (a broken clock's true offset marked). "Add baselines" runs
+  epicenter, estimate, optional arrival circles), a close-up with the 5 km
+  hit radius, and each station's residual at the estimate. Dragging the
+  estimate on the map or close-up moves p-hat, refits t0-hat and redraws
+  the residuals. "Add baselines" runs
   "first to hear it" and "first three".
 - **Leaderboard tab.** Read only; every score is our own re-run.
 
