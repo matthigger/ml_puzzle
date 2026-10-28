@@ -82,6 +82,9 @@ jobs:
           sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 \
             || true
           bwrap --version
+      # each sandbox in a systemd scope too: one cap on its total memory
       - name: Re-run
         if: steps.waiting.outputs.n != '0'
+        env:
+          SANDBOX_SCOPE: "1"
         run: ~/venv/bin/python verify/verify.py

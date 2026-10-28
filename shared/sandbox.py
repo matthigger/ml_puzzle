@@ -4,9 +4,12 @@ Each puzzle's verify/verify.py re-runs an entry by starting its
 verify/child.py here and talking to it over stdin / stdout. Inside, the code
 sees the files passed in (at /verify), the Python running verify.py with its
 packages, and the read-only system: not the network, the environment (so not
-the database key), any home directory or another process. It runs as
-nobody, with at most MAX_AS of memory, MAX_PROC processes, MAX_FILE per file
-and a TMP_SIZE /tmp.
+the database key), any home directory or another process, and it can't
+make namespaces of its own. It runs as nobody, with at most MAX_AS of memory
+per process, MAX_PROC processes, MAX_FILE per file and a TMP_SIZE /tmp; with
+SANDBOX_SCOPE set (the workflow sets it), a systemd scope also caps the
+whole sandbox at MAX_MEM and MAX_PROC tasks (needs sudo without a
+password).
 
 Needs bubblewrap (apt install bubblewrap) and unprivileged user namespaces
 (on Ubuntu, bubblewrap's AppArmor profile or
@@ -14,6 +17,7 @@ kernel.apparmor_restrict_unprivileged_userns=0); check() says whether they
 work here.
 """
 import functools
+import os
 import subprocess
 import sys
 
@@ -23,6 +27,10 @@ MAX_AS = 2 << 30
 MAX_PROC = 64
 MAX_FILE = 64 << 20
 TMP_SIZE = 64 << 20
+
+# the whole sandbox's memory, with SANDBOX_SCOPE: the caps above are per
+# process, so 64 processes could take far more
+MAX_MEM = 1 << 30
 
 ENV = {
     'PATH': '/usr/bin:/bin',
@@ -51,18 +59,27 @@ def command(files: dict) -> list:
             /verify/name; child.py among them
 
     Returns:
-        argv (list): bwrap, then the limits (prlimit), then python
+        argv (list): the scope (with SANDBOX_SCOPE), bwrap, the limits
+            (prlimit), then python
     """
     if not _caps_tmpfs():
         raise RuntimeError('this bwrap cannot cap /tmp (no --size)')
-    argv = ['bwrap', '--unshare-all', '--die-with-parent', '--new-session',
-            '--clearenv', '--uid', '65534', '--gid', '65534',
-            '--cap-drop', 'ALL',
-            '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib',
-            '--symlink', 'usr/lib64', '/lib64', '--symlink', 'usr/bin', '/bin',
-            '--ro-bind-try', '/etc/fonts', '/etc/fonts',
-            '--proc', '/proc', '--dev', '/dev',
-            '--size', str(TMP_SIZE), '--tmpfs', '/tmp', '--chdir', '/tmp']
+    argv = []
+    if os.environ.get('SANDBOX_SCOPE'):
+        argv += ['sudo', '-n', 'systemd-run', '--scope', '--quiet',
+                 '--collect', '-p', f'MemoryMax={MAX_MEM}',
+                 '-p', 'MemorySwapMax=0', '-p', f'TasksMax={MAX_PROC}',
+                 f'--uid={os.getuid()}', f'--gid={os.getgid()}', '--']
+    argv += ['bwrap', '--unshare-all', '--unshare-user', '--disable-userns',
+             '--die-with-parent', '--new-session',
+             '--clearenv', '--uid', '65534', '--gid', '65534',
+             '--cap-drop', 'ALL',
+             '--ro-bind', '/usr', '/usr', '--symlink', 'usr/lib', '/lib',
+             '--symlink', 'usr/lib64', '/lib64',
+             '--symlink', 'usr/bin', '/bin',
+             '--ro-bind-try', '/etc/fonts', '/etc/fonts',
+             '--proc', '/proc', '--dev', '/dev',
+             '--size', str(TMP_SIZE), '--tmpfs', '/tmp', '--chdir', '/tmp']
     for d in sorted({sys.prefix, sys.base_prefix} - {'/usr'}):
         argv += ['--ro-bind', d, d]
     for name, path in files.items():
