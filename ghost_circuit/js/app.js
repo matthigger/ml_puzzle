@@ -868,8 +868,9 @@ def estimate(x, y):
     }
     store.set("boardCode", code);
     $("post-dialog").close();
-    runMsg(`Added "${r.name}" to the leaderboard: its score shows up ` +
-           "there once we've re-run it.", "ok");
+    // to the board, where the entry waits for its re-run (and the board
+    // reloads itself until it's scored)
+    setMode("board");
   }
 
   async function removeClicked() {
