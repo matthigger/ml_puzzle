@@ -68,11 +68,23 @@ create table if not exists private.boards (
   id bigint generated always as identity primary key,
   project text not null references private.projects (id),
   title text not null,
-  code text not null unique check (char_length(code) >= 16),
+  code text not null check (char_length(code) >= 7),
   open boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint boards_project_code_key unique (project, code)
 );
 alter table private.boards enable row level security;
+-- a code is unique within its project only, so one short test code can
+-- open a board on every project (class boards keep new_board's 60 bits)
+alter table private.boards drop constraint if exists boards_code_key;
+alter table private.boards drop constraint if exists boards_code_check;
+alter table private.boards
+  add constraint boards_code_check check (char_length(code) >= 7);
+do $$ begin
+  alter table private.boards
+    add constraint boards_project_code_key unique (project, code);
+exception when duplicate_object or duplicate_table then null;
+end $$;
 
 create table if not exists private.entries (
   id bigint generated always as identity primary key,
