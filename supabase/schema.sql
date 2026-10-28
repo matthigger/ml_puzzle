@@ -11,7 +11,8 @@
 --
 --   leaderboard(project, code, token)  the board: {title, open, entries},
 --                                      entries best first, mine = true on
---                                      the caller's own
+--                                      the caller's own, each with its
+--                                      status and when it got there
 --   post_entry(...)                    add or replace the caller's entry:
 --                                      code only; it waits for a re-run
 --   delete_entry(project, code, token) remove the caller's entry
@@ -19,7 +20,14 @@
 -- and each project's re-run script, with the secret key, calls:
 --
 --   pending_entries(project)   entries waiting for a re-run, any board
+--   start_entry(id, version)   the re-run has started (started_at)
 --   set_result(...)            the re-run's score, or why it failed
+--
+-- An entry is pending (started_at set once a re-run picks it up), then
+-- done, failed or overtime (over the re-run's time limit). Every post asks
+-- GitHub to re-run the project's entries at once (dispatch_rerun), with
+-- the token in the Vault secret github_dispatch_token; without it, entries
+-- wait for the workflow's schedule.
 --
 -- A score is the project's own: metrics (jsonb, shown on its board),
 -- qualifies (cleared the project's bar) and rank (lower is better among
@@ -99,7 +107,7 @@ create table if not exists private.entries (
   -- bumped by every post, so a re-run of older code is never saved
   version integer not null default 1,
   status text not null default 'pending'
-    check (status in ('pending', 'done', 'failed')),
+    check (status in ('pending', 'done', 'failed', 'overtime')),
   -- the re-run: null until done
   metrics jsonb,
   qualifies boolean,
@@ -109,10 +117,16 @@ create table if not exists private.entries (
   hidden boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  -- the re-run that picked up this version; rerun_at is when it ended
+  started_at timestamptz,
   rerun_at timestamptz,
   constraint entries_board_token unique (board, token_hash)
 );
 alter table private.entries enable row level security;
+alter table private.entries add column if not exists started_at timestamptz;
+alter table private.entries drop constraint if exists entries_status_check;
+alter table private.entries add constraint entries_status_check
+  check (status in ('pending', 'done', 'failed', 'overtime'));
 create index if not exists entries_pending
   on private.entries (updated_at) where status = 'pending';
 
@@ -183,17 +197,20 @@ declare
 begin
   return jsonb_build_object('title', b.title, 'open', b.open, 'entries',
     coalesce((
-      -- a failed re-run is shown to its owner only, with the reason
+      -- a failed (or overtime) re-run is shown to its owner only, with the
+      -- reason
       select jsonb_agg(jsonb_build_object(
                'name', e.name, 'method', e.method, 'status', e.status,
                'metrics', e.metrics, 'qualifies', e.qualifies,
                'error', case when e.token_hash = hash then e.error end,
-               'updated_at', e.updated_at, 'mine', e.token_hash = hash)
+               'updated_at', e.updated_at, 'started_at', e.started_at,
+               'rerun_at', e.rerun_at, 'mine', e.token_hash = hash)
              order by e.status = 'done' desc, e.qualifies desc nulls last,
                       e.rank asc nulls last, e.updated_at asc)
         from private.entries e
        where e.board = b.id and not e.hidden
-         and (e.status <> 'failed' or e.token_hash = hash)), '[]'::jsonb));
+         and (e.status not in ('failed', 'overtime')
+              or e.token_hash = hash)), '[]'::jsonb));
 end;
 $$;
 
@@ -263,6 +280,7 @@ begin
     status = 'pending',
     metrics = null, qualifies = null, rank = null, seed = null, error = null,
     updated_at = now(),
+    started_at = null,
     rerun_at = null;
 end;
 $$;
@@ -300,6 +318,24 @@ as $$
 $$;
 
 
+-- the re-run has picked up this version of the entry; false if it was
+-- re-posted (or taken down) since, so there's nothing to run
+create or replace function public.start_entry(entry_id bigint,
+                                              entry_version integer)
+returns boolean
+language sql
+security definer
+set search_path = ''
+as $$
+  with started as (
+    update private.entries e set started_at = now()
+     where e.id = entry_id and e.version = entry_version
+       and e.status = 'pending' and not e.hidden
+    returning 1)
+  select exists (select 1 from started);
+$$;
+
+
 create or replace function public.set_result(
   entry_id bigint,
   entry_version integer,
@@ -327,17 +363,73 @@ as $$
 $$;
 
 
+-- every post (and every entry a moderator sets back to pending) asks
+-- GitHub to re-run the project's entries now, through pg_net (sent after
+-- the post commits, so it never slows or fails it). No cooldown: the
+-- workflow keeps one run going and at most one waiting per project, and a
+-- run keeps going until nothing is pending.
+create extension if not exists pg_net;
+
+create or replace function private.dispatch_rerun() returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  gh_token text;
+  proj text;
+begin
+  select s.decrypted_secret into gh_token from vault.decrypted_secrets s
+   where s.name = 'github_dispatch_token';
+  if coalesce(gh_token, '') = '' then
+    return null;
+  end if;
+  select b.project into proj from private.boards b where b.id = new.board;
+  perform net.http_post(
+    url := 'https://api.github.com/repos/matthigger/ml_puzzle/actions/'
+           'workflows/verify.yml/dispatches',
+    body := jsonb_build_object('ref', 'main',
+                               'inputs', jsonb_build_object('puzzle', proj)),
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || gh_token,
+      'Accept', 'application/vnd.github+json',
+      'X-GitHub-Api-Version', '2022-11-28',
+      'User-Agent', 'ml-puzzle-leaderboard'));
+  return null;
+exception when others then
+  -- a post must never fail over the dispatch: the schedule re-runs it
+  raise warning 'dispatch_rerun: %', sqlerrm;
+  return null;
+end;
+$$;
+
+drop trigger if exists entries_dispatch_insert on private.entries;
+create trigger entries_dispatch_insert
+  after insert on private.entries
+  for each row when (new.status = 'pending')
+  execute function private.dispatch_rerun();
+drop trigger if exists entries_dispatch_update on private.entries;
+create trigger entries_dispatch_update
+  after update on private.entries
+  for each row when (new.status = 'pending'
+                     and (old.status <> 'pending'
+                          or new.version <> old.version))
+  execute function private.dispatch_rerun();
+
+
 -- The pages' three functions are callable by the publishable (anon) key;
--- the re-runs' two by the secret (service_role) key only; the private
+-- the re-runs' three by the secret (service_role) key only; the private
 -- helpers by neither.
 revoke execute on function
   private.token_hash(text),
   private.new_board(text, text),
   private.board_for(text, text),
+  private.dispatch_rerun(),
   public.leaderboard(text, text, text),
   public.post_entry(text, text, text, text, text, text, jsonb),
   public.delete_entry(text, text, text),
   public.pending_entries(text),
+  public.start_entry(bigint, integer),
   public.set_result(bigint, integer, text, jsonb, boolean, double precision,
                     bigint, text)
   from public, anon, authenticated;
@@ -348,6 +440,7 @@ grant execute on function
   to anon, authenticated;
 grant execute on function
   public.pending_entries(text),
+  public.start_entry(bigint, integer),
   public.set_result(bigint, integer, text, jsonb, boolean, double precision,
                     bigint, text)
   to service_role;
