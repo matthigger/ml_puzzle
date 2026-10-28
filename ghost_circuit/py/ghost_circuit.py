@@ -1,192 +1,147 @@
 """ Ghost on the Circuit: which devices are wired to the metered circuit?
 
-A circuit hides which of n_device smart-plug devices are wired to it and how
-many watts each draws. You see every device's hourly on / off log (x) and
-the circuit's hourly meter (y); your estimator returns the watts it believes
-each device draws on this circuit, 0 for devices not on it.
+A circuit's power meter logs average watts each hour; smart plugs log whether
+each of n_dev devices was on (1) or off (0) that hour. Only n_on of the
+devices are wired to the metered circuit. Your estimator sees the plugs (x)
+and the meter (y) and names the devices it believes are on the circuit.
 
-    from ghost_circuit import Circuit, evaluate
+    from ghost_circuit import GhostCircuit, evaluate
+
+    circuit = GhostCircuit.sample(seed=0)   # official setup
+    circuit.x                               # (n_hour, n_dev) on / off, 0 or 1
+    circuit.y                               # (n_hour,) metered watts
+    circuit.score([3, 17, 42])              # how many named devices were right
 
     def estimate(x, y):
         ...
-        return watts            # (n_device,): 0 means "not on this circuit"
+        return device_idx                   # columns of x on the circuit
 
-    evaluate(estimate)          # 1000 circuits of the official setup
-
-A circuit is right when every device drawing BIG_W or more is named and no
-device off the circuit is; smaller devices are lost in the meter's noise,
-so naming them is optional. Among estimators right on 95% of circuits, the
-one with the fewest watts off on average (sum over devices of
-|estimate - truth|) wins.
+    evaluate(estimate)                      # 20 fresh circuits
 """
-import math
-
 import numpy as np
 
 # the graded setup
-OFFICIAL = dict(n_hour=72, n_device=150, n_on=8, noise_sd=50.0)
-
-# an estimate of at least this many watts names its device
-NAMED_W = 1.0
-
-# every device drawing at least this many watts must be named
-BIG_W = 100.0
+OFFICIAL = dict(n_hour=72, n_dev=150, n_on=8, watts=(20, 1500),
+                duty=(.1, .6), baseline=200, noise=50)
 
 
-class Circuit:
-    """ One metered circuit and the devices wired to it.
+class GhostCircuit:
+    """ one metered circuit, plus every smart plug in the building
 
     Attributes you may use:
-        x (np.array): (n_hour, n_device) int, 1 where device j was on in
-            hour t
-        y (np.array): (n_hour,) the meter: average watts in each hour
-        n_hour (int): hours logged
-        n_device (int): devices logged, numbered 0 .. n_device - 1
+        x (np.array): (n_hour, n_dev), x[t, i] = 1 if device i was on in hour t
+        y (np.array): (n_hour,), metered watts in each hour
+        n_hour (int): hours of data
+        n_dev (int): devices are numbered 0, 1, ..., n_dev - 1 (columns of x)
 
     Everything starting with an underscore is the hidden truth: peeking at
-    it is cheating (and the competition's copy doesn't have it).
-        _watts (np.array): (n_device,) watts each device draws on this
-            circuit, 0 for devices not on it
-        _base (float): always-on load, watts
-        _noise_sd (float): the meter's noise, watts
+    it is cheating.
     """
 
-    def __init__(self, x, y, watts, base, noise_sd):
-        self.x = x
-        self.y = y
-        self.n_hour, self.n_device = x.shape
-        self._watts = watts
-        self._base = base
-        self._noise_sd = noise_sd
+    def __init__(self, x, y, on_circuit, watts):
+        self.x = np.asarray(x)
+        self.y = np.asarray(y)
+        self.n_hour, self.n_dev = self.x.shape
+        self._on_circuit = np.sort(on_circuit)
+        self._watts = np.asarray(watts)
 
     @classmethod
-    def sample(cls, n_hour=72, n_device=150, n_on=8, noise_sd=50.0,
-               seed=None):
-        """ Build a random circuit.
-
-        Each device is on in an hour with its own probability (its duty
-        cycle, 0.1 to 0.6), independently of the others. The ghost (the
-        biggest device) draws 1200 to 2000 W; the other n_on - 1 devices on
-        the circuit draw 20 to 1200 W, log-uniform.
+    def sample(cls, n_hour=72, n_dev=150, n_on=8, watts=(20, 1500),
+               duty=(.1, .6), baseline=200, noise=50, seed=None):
+        """ builds a random circuit
 
         Args:
-            n_hour (int): hours logged
-            n_device (int): devices logged
-            n_on (int): devices wired to this circuit
-            noise_sd (float): the meter's noise, watts
-            seed (int | list): seeds everything (as numpy's SeedSequence
-                does: every bit counts)
+            n_hour (int): hours of data (rows of x)
+            n_dev (int): devices with a smart plug (columns of x)
+            n_on (int): how many of those devices are on the metered circuit
+            watts: how to draw the watts of the n_on devices on the circuit,
+                either
+                    (low, high): log-uniform, stratified so the n_on devices
+                        span the whole range (e.g. 20, 60, 160, ..., 1500 W
+                        rather than 8 similar values), or
+                    callable: watts(rng, n_on) returns n_on positive watts
+            duty (tuple): (low, high), each device is on a fraction of the
+                hours drawn uniformly from this range
+            baseline (float): watts the circuit draws with every device off
+            noise (float): standard deviation of the meter's hourly noise
+            seed (int): same seed (and setup), same circuit
         """
-        # the log (seen) and the circuit (hidden) come from independent
-        # streams, so x says nothing about the watts
-        seen, rng = (np.random.default_rng(s)
-                     for s in np.random.SeedSequence(seed).spawn(2))
-        duty = seen.uniform(.1, .6, n_device)
-        x = (seen.random((n_hour, n_device)) < duty).astype(int)
+        assert 0 < n_on <= n_dev, 'need 0 < n_on <= n_dev'
+        rng = np.random.default_rng(seed)
 
-        on = rng.choice(n_device, n_on, replace=False)
-        watts = np.zeros(n_device)
-        watts[on[0]] = rng.uniform(1200, 2000)
-        watts[on[1:]] = np.exp(rng.uniform(math.log(20), math.log(1200),
-                                           n_on - 1))
-        base = rng.uniform(150, 250)
-        y = x @ watts + base + rng.normal(0, noise_sd, n_hour)
-        return cls(x, np.round(y, 1), watts, base, noise_sd)
+        p_on = rng.uniform(*duty, n_dev)
+        x = (rng.random((n_hour, n_dev)) < p_on).astype(int)
 
-    @property
-    def _ghost(self):
-        """ The biggest device on the circuit (hidden truth). """
-        return int(np.argmax(self._watts))
+        if callable(watts):
+            w_on = np.asarray(watts(rng, n_on), dtype=float)
+            assert w_on.shape == (n_on,) and (w_on > 0).all(), \
+                'watts(rng, n_on) must return n_on positive values'
+        else:
+            # one draw from each of n_on equal slices of [log low, log high]
+            edge = np.linspace(np.log(watts[0]), np.log(watts[1]), n_on + 1)
+            w_on = np.exp(rng.uniform(edge[:-1], edge[1:]))
 
+        on_circuit = rng.choice(n_dev, n_on, replace=False)
+        w = np.zeros(n_dev)
+        w[on_circuit] = w_on
+        y = baseline + x @ w + rng.normal(0, noise, n_hour)
 
-def check_watts(watts, n_device):
-    """ Return the estimate as a float array, or raise if it isn't one.
+        return cls(x, y, on_circuit, w)
 
-    Returns:
-        watts (np.array): (n_device,) float
-    """
-    try:
-        w = np.asarray(watts, dtype=float)
-    except (TypeError, ValueError):
-        raise TypeError(f'estimate returned {type(watts).__name__}, not '
-                        f'{n_device} watts (one per device)') from None
-    if w.size != n_device:
-        raise ValueError(f'estimate returned {w.size} '
-                         f'number{"" if w.size == 1 else "s"}: need '
-                         f'{n_device}, one per device')
-    w = w.ravel()
-    if not np.all(np.isfinite(w)):
-        raise ValueError('estimate returned nan or inf watts')
-    return w
+    def score(self, guess):
+        """ counts how many devices in guess are (or aren't) on the circuit
 
+        Watts don't matter, only which devices were named.
 
-def score(w_hat, circuit):
-    """ How one estimate did on one circuit.
+        Args:
+            guess: device indices (columns of x) named as on the circuit
 
-    Args:
-        w_hat (np.array): (n_device,) estimated watts
-        circuit (Circuit): the circuit, hidden truth included
-
-    Returns:
-        result (dict): correct (bool), missed (devices of BIG_W or more not
-            named), false_alarms (devices named but not on the circuit),
-            named, watts_off (sum of |w_hat - truth|), ghost (its device),
-            ghost_err (w_hat - truth, at the ghost)
-    """
-    w = circuit._watts
-    named = w_hat >= NAMED_W
-    missed = int(np.sum((w >= BIG_W) & ~named))
-    false_alarms = int(np.sum(named & (w == 0)))
-    g = circuit._ghost
-    return dict(correct=missed == 0 and false_alarms == 0, missed=missed,
-                false_alarms=false_alarms, named=int(named.sum()),
-                watts_off=float(np.abs(w_hat - w).sum()), ghost=g,
-                ghost_err=float(w_hat[g] - w[g]))
+        Returns:
+            score (dict):
+                right (int): named, and on the circuit
+                wrong (int): named, but not on the circuit
+                missed (int): on the circuit, but not named
+                exact (bool): named exactly the devices on the circuit
+        """
+        guess = set(int(i) for i in np.asarray(guess).ravel())
+        assert all(0 <= i < self.n_dev for i in guess), \
+            f'devices are 0 to {self.n_dev - 1}'
+        truth = set(self._on_circuit.tolist())
+        return dict(right=len(guess & truth),
+                    wrong=len(guess - truth),
+                    missed=len(truth - guess),
+                    exact=guess == truth)
 
 
-def summarize(correct, watts_off):
-    """ The run's summary: accuracy (with its standard error) and watts off.
-
-    Args:
-        correct (list): bool per circuit
-        watts_off (list): float per circuit
-    """
-    n = len(correct)
-    acc = sum(correct) / n
-    srt = sorted(watts_off)
-    return dict(accuracy=acc, accuracy_se=math.sqrt(acc * (1 - acc) / n),
-                mean_off=sum(watts_off) / n, median_off=srt[n // 2],
-                p90_off=srt[min(n - 1, int(.9 * n))])
-
-
-def evaluate(estimate, n_circuit=1000, seed=0, verbose=True, **setup):
-    """ Run estimate on n_circuit random circuits, summarize how it did.
+def evaluate(estimate, n_circuit=20, seed=0, verbose=True, **setup):
+    """ runs estimate(x, y) on n_circuit random circuits, summarizes how it did
 
     Every call with the same seed (and setup) uses the same circuits, so two
-    estimators evaluated with the same seed face identical data.
+    estimators evaluated with the same seed face identical circuits.
 
     Args:
-        estimate (callable): estimate(x, y) -> (n_device,) watts
-        setup: overrides of OFFICIAL (n_hour, n_device, n_on, noise_sd)
+        estimate (callable): estimate(x, y) returns the device indices it
+            names as on the circuit
+        n_circuit (int): how many circuits to draw
+        seed (int): which circuits
+        verbose (bool): print a one line summary
+        **setup: passed to GhostCircuit.sample (default: OFFICIAL)
 
     Returns:
-        result (dict): accuracy, accuracy_se, mean / median / p90 watts off,
-            and per circuit lists: correct, watts_off
+        result (dict): mean right / wrong / missed per circuit, fraction of
+            circuits named exactly, and a list of every circuit's score
     """
     setup = {**OFFICIAL, **setup}
-    correct, watts_off = [], []
+    scores = []
     for idx in range(n_circuit):
-        circuit = Circuit.sample(**setup, seed=seed * 1_000_003 + idx)
-        w_hat = check_watts(estimate(circuit.x.copy(), circuit.y.copy()),
-                            circuit.n_device)
-        s = score(w_hat, circuit)
-        correct.append(s['correct'])
-        watts_off.append(s['watts_off'])
+        circuit = GhostCircuit.sample(**setup, seed=seed * 1_000_003 + idx)
+        scores.append(circuit.score(estimate(circuit.x, circuit.y)))
 
-    result = dict(summarize(correct, watts_off), correct=correct,
-                  watts_off=watts_off)
+    result = {k: np.mean([s[k] for s in scores])
+              for k in ['right', 'wrong', 'missed', 'exact']}
+    result['scores'] = scores
     if verbose:
-        print(f'{n_circuit} circuits: right {result["accuracy"]:.1%} of the '
-              f'time (need 95%), {result["mean_off"]:.0f} watts off on '
-              'average')
+        print(f'{n_circuit} circuits: {result["right"]:.1f} of '
+              f'{setup["n_on"]} devices found, {result["wrong"]:.1f} wrongly '
+              f'named, exactly right {result["exact"]:.0%} of the time')
     return result

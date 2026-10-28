@@ -2,9 +2,9 @@
 // reads (shared/board.js).
 const PUZZLE = {
   project: "ghost_circuit",
-  // the bar an entry must clear to be ranked
-  bar: "95%",
+  // every entry is ranked (by F1), so the bar never shows
+  bar: "F1",
   // the board's four score columns, from a re-run's metrics
-  scores: m => [(100 * m.accuracy).toFixed(1) + "%", Math.round(m.mean_off),
-                Math.round(m.median_off), Math.round(m.p90_off)],
+  scores: m => [m.f1.toFixed(3), (100 * m.tpr).toFixed(1) + "%",
+                (100 * m.fpr).toFixed(2) + "%", m.mean_wrong.toFixed(1)],
 };

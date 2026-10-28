@@ -6,8 +6,8 @@
   <title>Ghost on the Circuit</title>
   <meta name="description" content="Practice site for the Ghost on the
     Circuit puzzle: run your estimate() on as many random circuits as you
-    like, see how often it names the right devices and how many watts it
-    is off.">
+    like, see how many of the devices it finds and how many it names
+    wrongly.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M18 2 L6 18 H15 L13 30 L26 12 H17 Z' fill='%23fbbf24' stroke='%23b45309' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="../shared/style.css">
   <link rel="stylesheet" href="puzzle.css">
@@ -27,17 +27,16 @@
 
   <section class="intro card">
     <div>
-      <p class="goal"><b>Goal:</b> name the devices on the circuit, right
-        in at least 95% of circuits, with as few watts off (averaged over
-        many circuits) as you can.</p>
-      <p><code>estimate(x, y)</code> gets <code>x</code>, the (72, 150)
-        on / off log (1: device <code>j</code> on in hour <code>t</code>),
-        and <code>y</code>, the meter's 72 hourly watts. It returns 150
-        watts, one per device: 0 (or under 1) for devices not on the
-        circuit. A circuit is <b>right</b> when you name every device
-        drawing 100 W or more, and none that isn't on it. Everything runs
-        here in your browser, and nothing leaves it unless you add a run to
-        the leaderboard.</p>
+      <p class="goal"><b>Goal:</b> find as many of the 8 devices on the
+        circuit as you can (TPR) while naming few of the other 142 (FPR).
+        The leaderboard ranks by F1 = 2 &times; found / (named + 8), which
+        is high only when both go well.</p>
+      <p><code>estimate(x, y)</code> gets the smart plugs' on / off log
+        <code>x</code> (72 hours by 150 devices) and the meter's hourly
+        watts <code>y</code>, and returns the devices (columns of
+        <code>x</code>) you believe are on the circuit. Everything runs here
+        in your browser, and nothing leaves it unless you add a run to the
+        leaderboard.</p>
     </div>
     <details class="howto" data-show="practice">
       <summary>How your code is run</summary>
@@ -48,13 +47,13 @@
           one defining <code>estimate</code>) can import the others. A
           notebook's code cells run top to bottom; lines starting with
           <code>!</code> or <code>%</code> are skipped, and its own
-          <code>evaluate()</code> calls run only 20 circuits, so loading
+          <code>evaluate()</code> calls run at most 20 circuits, so loading
           stays quick.</li>
         <li>Every function that takes <code>(x, y)</code> shows up in the
           <b>Estimator</b> menu, so you can compare a few in one go. Name a
           run to tell versions apart: each row keeps the code it ran.</li>
-        <li>Your estimator runs once per circuit: it should take well under a
-          second (the leaderboard allows about one).</li>
+        <li>Your estimator runs once per circuit: keep it under a second
+          (the leaderboard allows about one).</li>
         <li>Anything callable works, even a method of an object:
 <pre>class Fitter:
     def __init__(self, n_top=8):   # runs once, when your code loads
@@ -126,12 +125,13 @@ estimate = Fitter(n_top=6).estimate</pre></li>
             placeholder="optional, e.g. top 6"></label>
         <label class="field"><span>Circuits</span>
           <input id="n-circuit" type="number" min="1" max="20000"
-            value="1000"></label>
+            value="200"></label>
         <label class="field"><span>Seed</span>
           <input id="seed" type="number" min="0" value="0"></label>
-        <p class="hint">Each circuit: 150 devices logged for 72 hours, 8 of
-          them on the circuit, meter noise about 50 W. The same seed gives
-          the same circuits, whatever the estimator.</p>
+        <p class="hint">Each circuit: 150 devices, 72 hours, 8 devices on
+          the circuit. A seed gives the same circuits as
+          <code>evaluate(estimate, seed=...)</code> in your notebook,
+          whatever the estimator.</p>
         <div class="buttons run-row">
           <button id="run-btn" class="primary" disabled>Run</button>
           <button id="stop-btn" disabled>Stop</button>
@@ -157,12 +157,11 @@ estimate = Fitter(n_top=6).estimate</pre></li>
       </div>
       <p class="hint">Saved in this browser only. Click a row for its
         post-mortem and code, a name to rename it, a heading to sort.
-        &ldquo;Right&rdquo; is &plusmn; 2 standard deviations; <b>maybe</b>
-        means that range includes 95%, so run more circuits to tell.
-        &ldquo;Watts off&rdquo; is &Sigma;<sub>j</sub>
-        |<i>&#373;<sub>j</sub></i> &minus; <i>w<sub>j</sub></i>| over all 150
-        devices. &ldquo;Add baselines&rdquo; runs the simplest estimators
-        on the same circuits.</p>
+        TPR: share of the 8 devices you found. FPR: share of the other 142
+        you named. F1: 2 &times; found / (named + 8), averaged over
+        circuits. &plusmn; is 2 standard errors. &ldquo;Add
+        baselines&rdquo; runs the simplest estimators on the same
+        circuits.</p>
     </section>
 
     <section class="card wide" data-show="practice" id="pm-card">
@@ -182,13 +181,15 @@ estimate = Fitter(n_top=6).estimate</pre></li>
       </details>
       <div class="pm-bar">
         <p id="pm-msg" class="hint">Click a run above to go through its
-          circuits one by one, with the hidden truth revealed.</p>
+          circuits one by one, with the hidden truth revealed, and try
+          switching devices on or off.</p>
         <div class="pm-tools">
           <label class="check" id="wrong-only-box" hidden><input
-            type="checkbox" id="wrong-only"> wrong circuits only</label>
+            type="checkbox" id="wrong-only"> circuits with a wrong
+            device</label>
           <button id="results-btn" hidden title="Every circuit of this run
-            as a CSV: one row per device on the circuit or given watts,
-            with the hidden truth">Download results</button>
+            as a CSV: one row per device on the circuit or named, with the
+            hidden truth">Download results</button>
         </div>
       </div>
       <div class="table-wrap pm-table-wrap" id="pm-table-wrap" hidden>
@@ -196,12 +197,6 @@ estimate = Fitter(n_top=6).estimate</pre></li>
           <thead><tr></tr></thead>
           <tbody></tbody>
         </table>
-      </div>
-      <div class="pm-bar" id="all-shops-box" hidden>
-        <span></span>
-        <label class="check" title="Off: only the devices on the circuit
-          and the ones you named"><input type="checkbox" id="all-shops">
-          show every device</label>
       </div>
       <div id="pm-plot"></div>
     </section>
@@ -223,15 +218,14 @@ estimate = Fitter(n_top=6).estimate</pre></li>
       </form>
       <p id="board-title" class="board-title" hidden></p>
       <p class="hint">Every score here is our own re-run: 2000 fresh
-        circuits of the official setup, on a seed nobody has seen. To add
-        yours, use <b>Add to leaderboard</b> on a row of the Practice tab's
-        runs.</p>
+        circuits, on a seed nobody has seen. Ranked by F1. To add yours, use
+        <b>Add to leaderboard</b> on a row of the Practice tab's runs.</p>
       <div class="table-wrap" id="board-wrap" hidden>
         <table id="board" class="runs">
           <thead><tr>
             <th class="num">#</th><th>Name</th><th>Method</th>
-            <th class="num">Right</th><th class="num">Avg watts off</th>
-            <th class="num">Median</th><th class="num">90th pct</th>
+            <th class="num">F1</th><th class="num">TPR</th>
+            <th class="num">FPR</th><th class="num">Wrong</th>
             <th>Updated</th>
           </tr></thead>
           <tbody></tbody>

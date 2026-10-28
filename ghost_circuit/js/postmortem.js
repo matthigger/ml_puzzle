@@ -1,25 +1,26 @@
 // PostMortem: one run, circuit by circuit. A sortable table with a row per
-// circuit, and a plot of one circuit with the hidden truth revealed.
+// circuit, and one circuit as an interactive stack with the hidden truth
+// revealed.
 //
 //   PostMortem.table(table, circuits, opts) -> {idx: tr} of the rows drawn
 //   PostMortem.mark(rows, idx)              highlight circuit idx's row
-//   PostMortem.plot(host, result, idx, all)  result: runner.replay()'s
-//                                            output; all: every device, or
-//                                            only those on the circuit or
-//                                            named
+//   PostMortem.plot(host, result, idx)      result: runner.replay()'s output
 //
-// The plot has two parts: a row per device (true watts as an outlined bar,
-// your estimate as a filled one inside it, biggest first), and the meter
-// hour by hour with the true load and your fit.
+// The plot lists the devices named and the devices on the circuit, each
+// switched on or off (at first: on if your estimate named it). Every
+// change refits least squares on the devices switched on, plus an
+// always-on load, and redraws the stack: each hour's fitted watts split
+// into the devices that were on, the meter's reading as a dot. "The truth"
+// stacks the hidden watts instead.
 //
 // Notation, the same in the table, the plot and their hover text: w_j is
-// device j's true watts (0 off the circuit), w-hat_j your estimate; a device
-// is named when w-hat_j >= 1; g is the ghost, the biggest device; y_t is the
+// device j's true watts (0 off the circuit), w-hat_j its fitted watts; TPR
+// = found / 8, FPR = wrong / 142, F1 = 2 found / (named + 8); y_t is the
 // meter in hour t.
 
 const PostMortem = (function () {
   const NS = "http://www.w3.org/2000/svg";
-  const BIG = 100, NAMED = 1;
+  const N_ON = 8, N_OFF = 142;
 
   function el(tag, attrs, parent) {
     const e = document.createElementNS(NS, tag);
@@ -28,13 +29,11 @@ const PostMortem = (function () {
     return e;
   }
 
-  // the notation, as HTML; wrapped in <i> so headings' uppercase styling
-  // leaves it alone
-  const WJ = "<i>w<sub>j</sub></i>", WHJ = "<i>ŵ<sub>j</sub></i>";
-  const OFF = "<i>Σ<sub>j</sub> |ŵ<sub>j</sub> − w<sub>j</sub>|</i>";
-  const GHOST = "<i>ŵ<sub>g</sub> − w<sub>g</sub></i>";
-  const watts = v => (v <= -0.5 ? "−" : "") + Math.abs(Math.round(v));
+  const WJ = "<i>w<sub>j</sub></i>";
+  const watts = v => String(Math.round(v));
   const dev = j => "dev_" + String(j).padStart(3, "0");
+  const pct = (v, d = 0) => (100 * v).toFixed(d) + "%";
+  const f1 = (right, named) => 2 * right / (named + N_ON);
 
   // hover help that can show the notation: one floating box for the page
   let tipBox = null;
@@ -70,24 +69,24 @@ const PostMortem = (function () {
   // columns: heading, sort key, cell text (or node), hover help
   const COLUMNS = [
     { label: "Circuit", num: true, key: c => c.idx, text: c => c.idx },
-    { label: "Result", key: c => c.correct ? 1 : 0,
-      node: c => badge(c.correct ? "right" : "wrong", c.correct ? "ok" : "bad") },
-    { label: "Missed", num: true, key: c => c.missed, text: c => c.missed || "",
-      help: `Devices of ${BIG} W or more you didn't name.` },
-    { label: "False alarms", num: true, key: c => c.false_alarms,
-      text: c => c.false_alarms || "",
-      help: `Devices you named that aren't on the circuit (${WJ} = 0).` },
-    { label: "Named", num: true, key: c => c.named, text: c => c.named,
-      help: `Devices you named: ${WHJ} ≥ ${NAMED}. 8 are on each circuit.` },
-    { label: "Watts off", html: `Watts off ${OFF}`, num: true,
-      key: c => c.watts_off, text: c => watts(c.watts_off),
-      help: `${OFF}: how far your watts are from the truth, summed over ` +
-            `every device. ${WJ}: device <i>j</i>'s true watts (hidden), ` +
-            `${WHJ}: yours.` },
-    { label: "Ghost error", html: `Ghost ${GHOST}`, num: true,
-      key: c => c.ghost_err, text: c => watts(c.ghost_err),
-      help: `${GHOST}: your watts minus the truth at the ghost <i>g</i>, ` +
-            "the biggest device. Negative: too low." },
+    { label: "Found", num: true, key: c => c.right,
+      node: c => c.right === N_ON ? badge("all 8", "ok")
+                                  : document.createTextNode(`${c.right} of 8`),
+      help: `Devices you named that are on the circuit, of its ${N_ON}. ` +
+            `TPR = found / ${N_ON}.` },
+    { label: "Wrong", num: true, key: c => c.wrong, text: c => c.wrong || "",
+      help: `Devices you named that aren't on the circuit (${WJ} = 0). ` +
+            `FPR = wrong / ${N_OFF}.` },
+    { label: "Named", num: true, key: c => c.n_named, text: c => c.n_named,
+      help: "How many devices you named." },
+    { label: "F1", num: true, key: c => f1(c.right, c.n_named),
+      text: c => f1(c.right, c.n_named).toFixed(2),
+      help: `2 × found / (named + ${N_ON}): high only when you find ` +
+            "most devices and name few wrong ones." },
+    { label: "Biggest miss", num: true, key: c => c.missed_w,
+      text: c => c.missed_w ? watts(c.missed_w) + " W" : "",
+      help: "True watts of the biggest device on the circuit you didn't " +
+            "name." },
   ];
 
   // opts: {sort: {col, dir}, onSort(col), onPick(idx)}
@@ -152,219 +151,312 @@ const PostMortem = (function () {
   }
 
   // -------------------------------------------------------------- plot
-  const W = 920, LEFT = 236, RIGHT = 24, AXIS = 30;
-
-  function svgBadge(g, x, y, label, cls) {
-    const w = 7 * label.length + 12;
-    el("rect", { x, y: y - 11, width: w, height: 15, rx: 7.5,
-                 class: "pm-badge " + cls }, g);
-    el("text", { x: x + w / 2, y, "text-anchor": "middle",
-                 class: "pm-badge-text " + cls }, g).textContent = label;
-    return x + w + 5;
-  }
+  const W = 920, L = 54, R = 14, TOP = 12, PH = 260, AXIS = 26;
 
   // round tick step giving about n ticks over span
   function step(span, n) {
     const raw = span / n, mag = 10 ** Math.floor(Math.log10(raw));
-    return [1, 2, 5, 10].map(m => m * mag).find(s => s >= raw);
+    return [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw);
   }
 
-  // what device j is, for its badge and bar color: [label, class] or null
-  function status(res, j) {
-    const w = res.w[j], named = res.w_hat[j] >= NAMED;
-    if (w >= BIG && !named) return ["MISSED", "bad"];
-    if (w === 0 && named) return ["FALSE ALARM", "bad"];
-    if (w > 0 && w < BIG) return [`UNDER ${BIG} W`, "muted"];
-    return null;
-  }
-
-  function devices(host, res, all) {
-    const n = res.w.length;
-    const order = [...Array(n).keys()]
-      .filter(j => all || res.w[j] > 0 || res.w_hat[j] >= NAMED)
-      .sort((a, b) => (res.w[b] - res.w[a]) || (res.w_hat[b] - res.w_hat[a]));
-    const compact = order.length > 30;
-    const RH = compact ? 16 : 36, k = order.length;
-    const H = k * RH + AXIS;
-
-    const vals = order.flatMap(j => [res.w[j], res.w_hat[j]]);
-    const lo = Math.min(0, ...vals), hi = Math.max(BIG, ...vals) * 1.04;
-    const plotW = W - LEFT - RIGHT;
-    const sx = v => LEFT + (v - lo) / (hi - lo) * plotW;
-
-    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "pm-plot",
-      role: "img", "aria-label": "Each device's true watts and your " +
-        "estimate, biggest first" });
-    order.forEach((j, row) => {
-      const y0 = row * RH, mid = y0 + RH / 2;
-      const g = el("g", {}, svg);
-      const st = status(res, j), isGhost = j === res.ghost;
-      const right = res.w[j] > 0 ? res.w[j] >= BIG ? res.w_hat[j] >= NAMED
-                                                   : null
-                                 : res.w_hat[j] >= NAMED ? false : null;
-      el("rect", { x: 0, y: y0, width: W, height: RH,
-                   class: st && st[1] === "bad" ? "pm-row picked bad"
-                        : row % 2 ? "pm-row alt" : "pm-row" }, g);
-      el("title", {}, g).textContent = `${dev(j)}: w = ${watts(res.w[j])} W, ` +
-        `ŵ = ${watts(res.w_hat[j])} W`;
-
-      // the truth (outlined) and your estimate (filled) from 0
-      const tH = compact ? 10 : 18, eH = compact ? 5 : 9;
-      const x0 = sx(0);
-      if (res.w[j] > 0) {
-        el("rect", { x: x0, y: mid - tH / 2, width: sx(res.w[j]) - x0,
-                     height: tH, class: "gc-true" }, g);
+  // the inverse of square matrix m (Gauss-Jordan, partial pivoting), or
+  // null if it is singular
+  function invert(m) {
+    const n = m.length;
+    const a = m.map((row, i) => [...row, ...row.map((_, k) => +(i === k))]);
+    for (let c = 0; c < n; c++) {
+      let piv = c;
+      for (let r = c + 1; r < n; r++) {
+        if (Math.abs(a[r][c]) > Math.abs(a[piv][c])) piv = r;
       }
-      const e = res.w_hat[j];
-      if (Math.abs(e) >= 0.5) {
-        el("rect", { x: Math.min(x0, sx(e)), y: mid - eH / 2,
-                     width: Math.abs(sx(e) - x0), height: eH,
-                     class: "gc-est" + (right === false ? " bad"
-                                      : right ? " ok" : "") }, g);
+      if (Math.abs(a[piv][c]) < 1e-8) return null;
+      [a[c], a[piv]] = [a[piv], a[c]];
+      const d = a[c][c];
+      for (let k = 0; k < 2 * n; k++) a[c][k] /= d;
+      for (let r = 0; r < n; r++) {
+        if (r === c || !a[r][c]) continue;
+        const f = a[r][c];
+        for (let k = 0; k < 2 * n; k++) a[r][k] -= f * a[c][k];
       }
-
-      el("text", { x: 10, y: compact ? mid + 4 : y0 + 16,
-                   class: compact ? "pm-note" : "pm-shop" }, g)
-        .textContent = dev(j);
-      let bx = compact ? 64 : 76;
-      if (isGhost) bx = svgBadge(g, bx, compact ? mid + 4 : y0 + 16, "GHOST", "ok");
-      if (st && (!compact || st[1] === "bad")) {
-        svgBadge(g, bx, compact ? mid + 4 : y0 + 16, ...st);
-      }
-      if (!compact) {
-        el("text", { x: 10, y: y0 + 31, class: "pm-note" }, g).textContent =
-          `w = ${watts(res.w[j])}, ŵ = ${watts(e)}`;
-      }
-    });
-
-    // the 100 W line: devices past it must be named
-    el("line", { x1: sx(BIG), x2: sx(BIG), y1: 0, y2: k * RH,
-                 class: "pm-mean" }, svg);
-    // watts axis
-    const ya = k * RH, s = step(hi - lo, 8);
-    el("line", { x1: sx(0), x2: sx(0), y1: 0, y2: ya, class: "pm-base" }, svg);
-    for (let v = Math.ceil(lo / s) * s; v <= hi; v += s) {
-      el("line", { x1: sx(v), x2: sx(v), y1: ya, y2: ya + 5, class: "pm-tick" }, svg);
-      el("text", { x: sx(v), y: ya + 18, "text-anchor": "middle",
-                   class: "pm-ticklabel" }, svg).textContent = watts(v);
     }
-    el("text", { x: LEFT - 10, y: ya + 18, "text-anchor": "end",
-                 class: "pm-ticklabel" }, svg).textContent = "watts";
-
-    const wrap = document.createElement("div");
-    wrap.className = "pm-plot-wrap" + (compact ? " tall" : "");
-    wrap.appendChild(svg);
-    host.appendChild(wrap);
-    if (!all) {
-      const more = document.createElement("p");
-      more.className = "hint";
-      more.textContent = `${n - k} other devices hidden: off the circuit, ` +
-        "and you gave them under 1 W.";
-      host.appendChild(more);
-    }
+    return a.map(row => row.slice(n));
   }
 
-  function meter(host, res) {
-    const T = res.y.length, PH = 220, TOP = 10;
-    const H = PH + AXIS;
-    const all = [...res.y, ...res.load, ...res.fit];
-    const s = step(Math.max(...all) - Math.min(0, ...all), 5);
-    const lo = Math.min(0, Math.floor(Math.min(...all) / s) * s);
-    const hi = Math.ceil(Math.max(...all) / s) * s;
-    const plotW = W - LEFT - RIGHT;
-    const sx = t => LEFT + (t + 0.5) / T * plotW;
-    const sy = v => TOP + (hi - v) / (hi - lo) * (PH - TOP);
+  // least squares of the meter y on devices ids plus an always-on term:
+  // {b, w: {j: [w_hat, se]}, fit, rms}, or {error}
+  function ols(x, y, ids) {
+    const n = y.length, p = ids.length + 1;
+    if (p > n - 2) {
+      return { error: `${ids.length} devices are switched on: a fit of ` +
+                      `${n} hours can take at most ${n - 3}.` };
+    }
+    const rows = y.map((_, t) => [...ids.map(j => x[j][t]), 1]);
+    const m = Array.from({ length: p }, (_, a) => Array.from({ length: p },
+      (_, b) => rows.reduce((s, r) => s + r[a] * r[b], 0)));
+    const inv = invert(m);
+    if (!inv) {
+      return { error: "Some devices switched on can't be told apart (same " +
+                      "on / off log, or always on), so no fit." };
+    }
+    const v = Array.from({ length: p },
+      (_, a) => rows.reduce((s, r, t) => s + r[a] * y[t], 0));
+    const beta = inv.map(row => row.reduce((s, q, b) => s + q * v[b], 0));
+    const fit = rows.map(r => r.reduce((s, q, k) => s + q * beta[k], 0));
+    const rss = y.reduce((s, yt, t) => s + (yt - fit[t]) ** 2, 0);
+    const s2 = rss / (n - p);
+    const w = {};
+    ids.forEach((j, k) => { w[j] = [beta[k], Math.sqrt(s2 * inv[k][k])]; });
+    return { b: beta[p - 1], w, fit, rms: Math.sqrt(rss / n) };
+  }
 
+  // what device j is, given the devices switched on
+  function status(res, on, j) {
+    if (res.w[j] > 0) return on.has(j) ? "found" : "missed";
+    return on.has(j) ? "wrong" : "out";
+  }
+  const STATUS = { found: ["FOUND", "ok"], missed: ["MISSED", "bad"],
+                   wrong: ["WRONG", "bad"], out: ["LEFT OUT", "muted"] };
+
+  function stack(host, res, x, on, fitRes, truth, focus, onFocus) {
+    const T = res.y.length, plotW = W - L - R, bw = plotW / T;
+    const H = TOP + PH + AXIS;
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "pm-plot",
-      role: "img", "aria-label": "The meter hour by hour, the true load " +
-        "and your fit" });
-    // hours the ghost was on
-    res.ghost_on.forEach((on, t) => {
-      if (on) {
-        el("rect", { x: sx(t) - plotW / T / 2, y: TOP, width: plotW / T,
-                     height: PH - TOP, class: "gc-on" }, svg);
+      role: "img", "aria-label": truth
+        ? "The meter hour by hour, split into the devices truly on it"
+        : "The meter hour by hour and the fit from the devices switched on" });
+    const defs = el("defs", {}, svg);
+    const hid = "gc-hatch-" + Math.random().toString(36).slice(2, 8);
+    const pat = el("pattern", { id: hid, width: 4, height: 4,
+      patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+    el("line", { x1: 0, y1: 0, x2: 0, y2: 4, class: "gc-hatch-line" }, pat);
+
+    // each hour: [base, segments {j, lo, hi}]
+    const ids = truth ? Object.keys(res.w).map(Number).filter(j => res.w[j] > 0)
+                      : [...on];
+    const watt = j => truth ? res.w[j] : fitRes.w[j][0];
+    ids.sort((a, b) => watt(b) - watt(a));
+    const base = truth ? res.baseline : fitRes.b;
+    const hours = res.y.map((_, t) => {
+      let up = base, down = base;
+      const segs = [];
+      for (const j of ids) {
+        if (!x[j][t]) continue;
+        const w = watt(j);
+        if (w >= 0) { segs.push({ j, lo: up, hi: up + w }); up += w; }
+        else { segs.push({ j, lo: down + w, hi: down, neg: true }); down += w; }
       }
+      return { segs, top: up, bottom: Math.min(0, down) };
     });
+    const vals = [...res.y, ...hours.map(h => h.top), ...hours.map(h => h.bottom), 0];
+    const s = step(Math.max(...vals) - Math.min(...vals), 5);
+    const lo = Math.floor(Math.min(...vals) / s) * s;
+    const hi = Math.ceil(Math.max(...vals) * 1.03 / s) * s;
+    const sy = v => TOP + (hi - v) / (hi - lo) * PH;
     for (let v = lo; v <= hi; v += s) {
-      el("line", { x1: LEFT, x2: W - RIGHT, y1: sy(v), y2: sy(v),
-                   class: "pm-base" }, svg);
-      el("text", { x: LEFT - 8, y: sy(v) + 4, "text-anchor": "end",
+      el("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v), class: "pm-base" }, svg);
+      el("text", { x: L - 8, y: sy(v) + 4, "text-anchor": "end",
                    class: "pm-ticklabel" }, svg).textContent = watts(v);
     }
-    const line = (vals, cls) => el("path", { class: cls, d: vals.map((v, t) =>
-      `${t ? "L" : "M"}${sx(t).toFixed(1)},${sy(v).toFixed(1)}`).join(" ") }, svg);
-    line(res.load, "gc-load");
-    line(res.fit, "gc-fit");
+    const gap = Math.min(1.2, bw * .18);
+    hours.forEach((h, t) => {
+      const x0 = L + t * bw + gap / 2, w0 = bw - gap;
+      if (base > 0) {
+        el("rect", { x: x0, y: sy(base), width: w0, height: sy(0) - sy(base),
+                     class: "gc-base" }, svg);
+      }
+      for (const g of h.segs) {
+        const st = status(res, on, g.j);
+        const r = el("rect", { x: x0, y: sy(g.hi), width: w0,
+          height: Math.max(.5, sy(g.lo) - sy(g.hi)),
+          class: `gc-seg gc-${st}${g.neg ? " gc-neg" : ""}` +
+                 (focus !== null && focus !== g.j ? " gc-fade" : "") }, svg);
+        if (st === "missed") r.setAttribute("fill", `url(#${hid})`);
+        el("title", {}, r).textContent = `${dev(g.j)}, hour ${t}: ` +
+          `${watts(watt(g.j))} W ${truth ? "(true)" : "(fitted)"}`;
+        r.addEventListener("click", () => onFocus(g.j));
+      }
+    });
     res.y.forEach((v, t) => {
-      const c = el("circle", { cx: sx(t), cy: sy(v), r: 2.6, class: "gc-y" }, svg);
-      el("title", {}, c).textContent = `hour ${t}: meter ${watts(v)} W, ` +
-        `true load ${watts(res.load[t])} W, your fit ${watts(res.fit[t])} W`;
+      const c = el("circle", { cx: L + (t + .5) * bw, cy: sy(v), r: 2.4,
+                               class: "gc-y" }, svg);
+      el("title", {}, c).textContent = `hour ${t}: meter ${watts(v)} W` +
+        (truth || !fitRes.fit ? "" : `, fit ${watts(fitRes.fit[t])} W`);
     });
     for (let t = 0; t < T; t += 12) {
-      el("line", { x1: sx(t), x2: sx(t), y1: PH, y2: PH + 5, class: "pm-tick" }, svg);
-      el("text", { x: sx(t), y: PH + 18, "text-anchor": "middle",
+      el("text", { x: L + t * bw, y: TOP + PH + 18, "text-anchor": "middle",
                    class: "pm-ticklabel" }, svg).textContent = t;
     }
-    el("text", { x: LEFT - 8, y: PH + 18, "text-anchor": "end",
+    el("text", { x: W - R, y: TOP + PH + 18, "text-anchor": "end",
                  class: "pm-ticklabel" }, svg).textContent = "hour";
-    el("text", { x: 10, y: TOP + 14, class: "pm-shop" }, svg).textContent =
-      "the meter, y";
-    el("text", { x: 10, y: TOP + 32, class: "pm-note" }, svg).textContent =
-      `always-on load: b = ${watts(res.base)}`;
-    el("text", { x: 10, y: TOP + 48, class: "pm-note" }, svg).textContent =
-      `your fit's: b̂ = ${watts(res.b_hat)}`;
-    el("text", { x: 10, y: TOP + 64, class: "pm-note" }, svg).textContent =
-      `meter noise: σ = ${watts(res.noise_sd)}`;
-
     const wrap = document.createElement("div");
     wrap.className = "pm-plot-wrap";
     wrap.appendChild(svg);
     host.appendChild(wrap);
   }
 
-  function plot(host, res, idx, all) {
-    host.replaceChildren();
-    const head = document.createElement("p");
-    head.className = "replay-head";
-    head.appendChild(badge(res.correct ? "right" : "wrong",
-                           res.correct ? "ok" : "bad"));
-    const parts = [`named ${res.named} device${res.named === 1 ? "" : "s"}`];
-    if (res.missed) parts.push(`missed ${res.missed}`);
-    if (res.false_alarms) {
-      parts.push(`${res.false_alarms} false alarm${res.false_alarms > 1 ? "s" : ""}`);
+  function stat(label, value, sub) {
+    const d = document.createElement("div");
+    d.className = "gc-stat";
+    d.innerHTML = `<span class="gc-stat-label">${label}</span>` +
+      `<span class="gc-stat-value">${value}</span>` +
+      `<span class="gc-stat-sub">${sub}</span>`;
+    return d;
+  }
+
+  function plot(host, res, idx) {
+    // devices listed: on the circuit (biggest first), then the others
+    // named; more can be added by number
+    const x = res.x.map(col => [...col].map(Number));
+    const yours = new Set(res.named);
+    const listed = [
+      ...Object.keys(res.w).map(Number).filter(j => res.w[j] > 0)
+        .sort((a, b) => res.w[b] - res.w[a]),
+      ...res.named.filter(j => !(res.w[j] > 0))];
+    let on = new Set(res.named), truth = false, focus = null;
+
+    function draw() {
+      host.replaceChildren();
+      const ids = [...on];
+      const fitRes = ols(x, res.y, ids);
+      const right = ids.filter(j => res.w[j] > 0).length;
+      const wrong = ids.length - right;
+      const edited = on.size !== yours.size || ids.some(j => !yours.has(j));
+
+      const head = document.createElement("div");
+      head.className = "gc-head";
+      const h = document.createElement("p");
+      h.className = "replay-head";
+      h.textContent = `Circuit ${idx}: ` + (edited
+        ? `your edit names ${on.size} device${on.size === 1 ? "" : "s"}. ` +
+          `Your estimate named ${yours.size} (F1 ${f1(res.right, res.n_named).toFixed(2)}).`
+        : `your estimate named ${on.size} device${on.size === 1 ? "" : "s"}. ` +
+          "Switch devices on or off to see how the fit and the scores change.");
+      head.appendChild(h);
+      if (edited) {
+        const b = document.createElement("button");
+        b.textContent = "Back to your estimate";
+        b.onclick = () => { on = new Set(res.named); draw(); };
+        head.appendChild(b);
+      }
+      host.appendChild(head);
+
+      const stats = document.createElement("div");
+      stats.className = "gc-stats";
+      stats.append(
+        stat("F1", f1(right, on.size).toFixed(2), `2 × ${right} / (${on.size} named + ${N_ON})`),
+        stat("TPR", pct(right / N_ON), `${right} of ${N_ON} found`),
+        stat("FPR", pct(wrong / N_OFF, 1), `${wrong} of ${N_OFF} wrong`),
+        stat("Left over", fitRes.error ? "—" : `±${watts(fitRes.rms)} W`,
+             `meter minus fit; noise is ±${watts(res.noise)} W`));
+      host.appendChild(stats);
+
+      const bar = document.createElement("div");
+      bar.className = "gc-bar";
+      const seg = document.createElement("div");
+      seg.className = "seg";
+      seg.setAttribute("role", "radiogroup");
+      seg.setAttribute("aria-label", "What the stack shows");
+      for (const [v, label] of [[false, "Fitted watts"], [true, "True watts"]]) {
+        const b = document.createElement("button");
+        b.setAttribute("role", "radio");
+        b.setAttribute("aria-checked", truth === v);
+        b.textContent = label;
+        b.onclick = () => { truth = v; draw(); };
+        seg.appendChild(b);
+      }
+      bar.appendChild(seg);
+      const key = document.createElement("div");
+      key.className = "key";
+      key.innerHTML = truth
+        ? '<span><i class="sw gc-found"></i>found</span>' +
+          '<span><i class="sw gc-missed"></i>missed</span>' +
+          '<span><i class="sw gc-base"></i>always on</span>' +
+          '<span><i class="dot gc-y"></i>meter</span>'
+        : '<span><i class="sw gc-found"></i>on the circuit</span>' +
+          '<span><i class="sw gc-wrong"></i>not on it (wrong)</span>' +
+          '<span><i class="sw gc-base"></i>fitted always-on</span>' +
+          '<span><i class="dot gc-y"></i>meter</span>';
+      bar.appendChild(key);
+      host.appendChild(bar);
+
+      if (!truth && fitRes.error) {
+        const msg = document.createElement("p");
+        msg.className = "msg error";
+        msg.textContent = fitRes.error + " Switch some off, or look at the true watts.";
+        host.appendChild(msg);
+      } else {
+        stack(host, res, x, on, fitRes, truth, focus,
+              j => { focus = focus === j ? null : j; draw(); });
+      }
+
+      devicesTable(host, fitRes);
+      const add = document.createElement("form");
+      add.className = "gc-add";
+      add.innerHTML = '<label class="field"><span>Add a device</span>' +
+        `<input type="number" min="0" max="${res.w.length - 1}" ` +
+        'placeholder="0 to 149" aria-label="Device number"></label>' +
+        '<button type="submit">Add and switch on</button>';
+      add.onsubmit = e => {
+        e.preventDefault();
+        const j = parseInt(add.querySelector("input").value);
+        if (!(j >= 0 && j < res.w.length)) return;
+        if (!listed.includes(j)) listed.push(j);
+        on.add(j);
+        focus = j;
+        draw();
+      };
+      host.appendChild(add);
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = "Fitted watts: least squares of the meter on the " +
+        "devices switched on, plus an always-on load; ± is 2 standard " +
+        "errors. A device whose range reaches 0 is one the meter can't " +
+        "vouch for. Click a slice or a row to pick out one device.";
+      host.appendChild(note);
     }
-    head.append(` Circuit ${idx}: ${parts.join(", ")}; ` +
-      `${watts(res.watts_off)} W off. The ghost was ${dev(res.ghost)} ` +
-      `(${watts(res.w[res.ghost])} W).`);
-    host.appendChild(head);
 
-    devices(host, res, all);
-    const key = document.createElement("div");
-    key.className = "key";
-    key.innerHTML =
-      '<span><i class="sw gc-true"></i>true watts <span><i>(w<sub>j</sub>)' +
-      "</i></span></span>" +
-      '<span><i class="sw gc-est ok"></i>your watts <span><i>(ŵ<sub>j</sub>)' +
-      "</i></span></span>" +
-      `<span><i class="ln mean"></i>${BIG} W: name every device past it</span>`;
-    host.appendChild(key);
+    function devicesTable(host, fitRes) {
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap gc-devices";
+      const tbl = document.createElement("table");
+      tbl.className = "runs";
+      tbl.innerHTML = '<thead><tr><th>On</th><th>Device</th><th></th>' +
+        '<th class="num">True watts</th><th class="num">Fitted watts</th>' +
+        "</tr></thead><tbody></tbody>";
+      for (const j of listed) {
+        const st = status(res, on, j), [label, cls] = STATUS[st];
+        const tr = tbl.tBodies[0].insertRow();
+        tr.className = "pick" + (focus === j ? " selected" : "");
+        tr.onclick = e => {
+          if (e.target.closest("input")) return;
+          focus = focus === j ? null : j;
+          draw();
+        };
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = on.has(j);
+        box.setAttribute("aria-label", "Switch " + dev(j) + " on");
+        box.onchange = () => {
+          if (box.checked) on.add(j); else on.delete(j);
+          draw();
+        };
+        tr.insertCell().appendChild(box);
+        tr.insertCell().textContent = dev(j) + (yours.has(j) ? "" : " (added)");
+        if (yours.has(j) || res.w[j] > 0) tr.cells[1].textContent = dev(j);
+        tr.insertCell().appendChild(badge(label, cls));
+        const tw = tr.insertCell();
+        tw.className = "num";
+        tw.textContent = `${watts(res.w[j])} W`;
+        const fw = tr.insertCell();
+        fw.className = "num";
+        const f = !fitRes.error && fitRes.w[j];
+        fw.textContent = f ? `${watts(f[0])} ± ${watts(2 * f[1])} W` : "—";
+      }
+      wrap.appendChild(tbl);
+      host.appendChild(wrap);
+    }
 
-    meter(host, res);
-    const key2 = document.createElement("div");
-    key2.className = "key";
-    key2.innerHTML =
-      '<span><i class="dot gc-y"></i>meter <span><i>(y<sub>t</sub>)</i></span></span>' +
-      '<span><i class="ln load"></i>true load, no noise</span>' +
-      '<span><i class="ln fit"></i>your fit <span><i>(xŵ + b̂)</i></span></span>' +
-      '<span><i class="sw gc-on"></i>ghost on</span>';
-    host.appendChild(key2);
-
-    const note = document.createElement("p");
-    note.className = "hint";
-    note.textContent = "wⱼ: device j's true watts (the hidden truth, shown " +
-      "only here); ŵⱼ: yours. The ghost is the biggest device. b̂ is the " +
-      "always-on load that best fits your watts.";
-    host.appendChild(note);
+    draw();
   }
 
   return { table, mark, plot };

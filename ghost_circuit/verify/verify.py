@@ -9,7 +9,8 @@ PROJECT and scores it its own way (score()).
 
 The student's code runs in a container with no network, a read-only disk,
 no secrets and limited memory / time (child.py). The circuits stay out here:
-the container gets each circuit's x and y only, never its watts.
+the container gets each circuit's x and y only, never which devices are on
+it. Every entry is ranked, by highest F1 (runner.summarize).
 
     python3 verify/verify.py                      re-run every waiting entry
     python3 verify/verify.py --local my_code.py   try one file, no database
@@ -24,7 +25,6 @@ environment (a secret / service_role key: never in the page).
 """
 import argparse
 import json
-import math
 import os
 import pathlib
 import secrets
@@ -34,12 +34,10 @@ import threading
 import time
 import urllib.request
 
-import numpy as np
-
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'py'))
 
-import ghost_circuit
-from ghost_circuit import OFFICIAL, Circuit
+import runner
+from ghost_circuit import OFFICIAL, GhostCircuit
 
 PROJECT = 'ghost_circuit'
 IMAGE = 'ghost-circuit-verify'
@@ -53,8 +51,8 @@ TIMEOUT_SEC = 30 * 60
 # in line again, every run)
 BUDGET_SEC = 100 * 60
 
-# longest protocol line accepted: an estimate is 150 numbers (a few KB),
-# the load reply carries at most an error message
+# longest protocol line accepted: an estimate is at most 150 device
+# numbers (under 1 KB), the load reply carries at most an error message
 MAX_LINE = 1 << 16
 
 DOCKER = ['docker', 'run', '--rm', '-i', '--network', 'none', '--read-only',
@@ -72,7 +70,7 @@ class Overtime(Failed):
 
 
 def no_constants(name):
-    """ Refuse JSON's NaN / Infinity: watts must be finite numbers. """
+    """ Refuse JSON's NaN / Infinity: devices are whole numbers. """
     raise ValueError(f'{name} is not a number')
 
 
@@ -89,8 +87,8 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
             search for from the meter data
 
     Returns:
-        result (dict): {accuracy, accuracy_se, mean_off, median_off,
-            p90_off, n_circuit, seed, seconds}
+        result (dict): runner.summarize()'s fields, n_circuit, seed,
+            seconds
 
     Raises:
         Failed: the code didn't load, raised, returned a bad estimate or
@@ -137,7 +135,7 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
         err = msg.get('error')
         return err if isinstance(err, str) and err.strip() else default
 
-    correct, watts_off = [], []
+    right, wrong = [], []
     try:
         send(dict(main=main, helpers=helpers, estimator=estimator))
         msg = recv()
@@ -145,21 +143,24 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
             raise Failed(error(msg, 'the code did not load'))
         for idx in range(n_circuit):
             # every bit of the secret seeds each circuit
-            circuit = Circuit.sample(**OFFICIAL, seed=[seed, idx])
+            circuit = GhostCircuit.sample(**OFFICIAL, seed=[seed, idx])
             send(dict(x=[''.join(map(str, row)) for row in circuit.x],
                       y=circuit.y.tolist()))
             msg = recv()
-            w = msg.get('w')
-            if 'w' not in msg:
+            d = msg.get('d')
+            if 'd' not in msg:
                 raise Failed(error(msg, f'circuit {idx}: no estimate'))
-            if (type(w) is not list or len(w) != circuit.n_device
-                    or not all(type(v) in (int, float) and math.isfinite(v)
-                               for v in w)):
-                raise Failed(f'circuit {idx}: the estimate is not '
-                             f'{circuit.n_device} finite watts')
-            s = ghost_circuit.score(np.array(w, dtype=float), circuit)
-            correct.append(s['correct'])
-            watts_off.append(s['watts_off'])
+            if (type(d) is not list or len(d) > circuit.n_dev
+                    or not all(type(v) is int for v in d)):
+                raise Failed(f'circuit {idx}: the estimate is not a list '
+                             'of device numbers')
+            try:
+                named = runner.check_guess(d, circuit.n_dev)
+            except ValueError as exc:
+                raise Failed(f'circuit {idx}: {exc}') from None
+            s = circuit.score(named)
+            right.append(s['right'])
+            wrong.append(s['wrong'])
     except Failed:
         raise
     except Exception as exc:
@@ -172,17 +173,17 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
         kill()
         proc.wait()
 
-    return dict(ghost_circuit.summarize(correct, watts_off),
-                n_circuit=n_circuit, seed=seed,
+    return dict(runner.summarize(right, wrong), n_circuit=n_circuit,
+                seed=seed,
                 seconds=time.monotonic() - start)
 
 
 def score(res):
     """ Return the board's view of a re-run: (metrics, qualifies, rank),
     rank lower is better among entries that qualify. """
-    metrics = {k: res[k] for k in ('accuracy', 'mean_off', 'median_off',
-                                   'p90_off', 'n_circuit')}
-    return metrics, res['accuracy'] >= 0.95, res['mean_off']
+    metrics = {k: res[k] for k in ('f1', 'tpr', 'fpr', 'mean_wrong',
+                                   'n_circuit')}
+    return metrics, True, -res['f1']
 
 
 def rpc(fn, body):
@@ -238,8 +239,9 @@ def rerun_entry(e):
         metrics, qualifies, rank = score(res)
         body = dict(status='done', error=None, metrics=metrics,
                     qualifies=qualifies, rank=rank, seed=res['seed'])
-        note = (f'{res["accuracy"]:.1%} right, {res["mean_off"]:.0f}'
-                f' watts off ({res["seconds"]:.0f} s)')
+        note = (f'F1 {res["f1"]:.3f}, TPR {res["tpr"]:.1%}, '
+                f'FPR {res["fpr"]:.2%}'
+                f' ({res["seconds"]:.0f} s)')
     except Exception as exc:
         msg = (str(exc) if isinstance(exc, Failed)
                else f'the re-run broke down ({type(exc).__name__})')
@@ -279,10 +281,11 @@ def main():
     except Failed as exc:
         print('failed:', exc)
         sys.exit(1)
-    print(f'{res["n_circuit"]} circuits: {res["accuracy"]:.1%} right, '
-          f'{res["mean_off"]:.0f} watts off on average '
-          f'(median {res["median_off"]:.0f}, 90th pct '
-          f'{res["p90_off"]:.0f}), {res["seconds"]:.0f} s')
+    print(f'{res["n_circuit"]} circuits: F1 {res["f1"]:.3f}, '
+          f'TPR {res["tpr"]:.1%} '
+          f'({res["mean_right"]:.1f} of {runner.N_ON} found), FPR '
+          f'{res["fpr"]:.2%} ({res["mean_wrong"]:.1f} wrong), '
+          f'{res["seconds"]:.0f} s')
 
 
 if __name__ == '__main__':

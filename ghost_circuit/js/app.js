@@ -4,55 +4,53 @@
 
 (function () {
   const $ = id => document.getElementById(id);
-  const pct = v => (100 * v).toFixed(1) + "%";
-  const watts = v => Math.round(v).toLocaleString("en-US");
-  const BASELINES = ["least squares", "on minus off", "on minus off, top 8"];
-  const OFFICIAL = { n_hour: 72, n_device: 150, n_on: 8, noise_sd: 50 };
+  const pct = (v, d = 1) => (100 * v).toFixed(d) + "%";
+  const BASELINES = ["correlation > 0.2", "on minus off, top 8",
+                     "least squares, top 8", "every device"];
   const EXAMPLE = `import numpy as np
 
 
 def estimate(x, y):
-    """ each device's average meter when on minus when off; the 8
-    biggest gaps are its watts, every other device gets 0 """
-    n_hour, n_device = x.shape
-    gap = np.zeros(n_device)
-    for j in range(n_device):
-        on = x[:, j] == 1
-        # a device never on (or never off) has no gap
-        if on.any() and (~on).any():
-            gap[j] = y[on].mean() - y[~on].mean()
-    gap[np.argsort(gap)[:-8]] = 0
-    return gap
+    """ every device whose on / off pattern correlates with the meter """
+    r = np.array([np.corrcoef(x[:, i], y)[0, 1] for i in range(x.shape[1])])
+    return np.flatnonzero(r > .2)
 `;
 
   // the baselines' code (py/runner.py), shown like a run's own
-  const ON_MINUS_OFF = `import numpy as np
+  const BASELINE_CODE = {
+    "correlation > 0.2": EXAMPLE,
+    "on minus off, top 8": `import numpy as np
 
 
 def estimate(x, y):
-    """ each device's average meter when on minus when off """
+    """ the 8 devices with the biggest gap between the average meter when
+    on and when off """
     gap = np.zeros(x.shape[1])
     for j in range(x.shape[1]):
         on = x[:, j] == 1
         if on.any() and (~on).any():
             gap[j] = y[on].mean() - y[~on].mean()
-`;
-  function baselineCode(name) {
-    if (name === "least squares") return { main: `import numpy as np
+    return np.argsort(gap)[-8:]
+`,
+    "least squares, top 8": `import numpy as np
 
 
 def estimate(x, y):
-    """ the least-squares fit (with an always-on term) of the meter on
-    every device; with more devices than hours, the smallest of the many
+    """ the 8 devices given the most watts by least squares (with an
+    always-on term); with more devices than hours, the smallest of its many
     perfect fits """
     a = np.column_stack([x, np.ones(len(y))])
-    return np.linalg.lstsq(a, y, rcond=None)[0][:-1]
-`, helpers: {} };
-    const top = name.endsWith("top 8")
-      ? "    # keep the 8 biggest gaps, 0 for the rest\n" +
-        "    gap[np.argsort(gap)[:-8]] = 0\n" : "";
-    return { main: ON_MINUS_OFF + top + "    return gap\n", helpers: {} };
-  }
+    return np.argsort(np.linalg.lstsq(a, y, rcond=None)[0][:-1])[-8:]
+`,
+    "every device": `import numpy as np
+
+
+def estimate(x, y):
+    """ name all of them (TPR 100%, and FPR 100%) """
+    return np.arange(x.shape[1])
+`,
+  };
+  const baselineCode = name => ({ main: BASELINE_CODE[name], helpers: {} });
 
   // ------------------------------------------------- browser storage
   // per-browser conveniences only: everything works without it. Keys are
@@ -81,10 +79,10 @@ def estimate(x, y):
   let mainFile = store.get("mainFile", null);
   let shownUpload = null;                   // the file shown in files mode
   // run records: {id, name, estimator, baseline, code: {main, helpers,
-  // mainName?} | null (baselines), n_hour, n_device, n_on, noise_sd,
-  // n_circuit, seed, accuracy, accuracy_se, mean_off, median_off, p90_off,
-  // seconds, when}
-  let runs = store.get("runs", []);
+  // mainName?} | null (baselines), n_circuit, seed, f1, f1_se, tpr,
+  // tpr_se, fpr, fpr_se, mean_right, mean_wrong, seconds, when}; runs
+  // scored some other way (no f1) are dropped
+  let runs = store.get("runs", []).filter(r => r.f1 !== undefined);
   let selectedId = store.get("selected", null);
   let sort = store.get("sort", { col: "When", dir: -1 });
   let pmSort = store.get("pmSort", { col: "Circuit", dir: 1 });
@@ -252,7 +250,7 @@ def estimate(x, y):
 
   // --------------------------------------------------------------- setup
   function formSetup() {
-    return { ...OFFICIAL,
+    return {
       n_circuit: Math.min(20000, Math.max(1, parseInt($("n-circuit").value) || 1)),
       seed: Math.max(0, parseInt($("seed").value) || 0) };
   }
@@ -266,9 +264,7 @@ def estimate(x, y):
     if (f) { $("n-circuit").value = f.n_circuit; $("seed").value = f.seed; }
   }
 
-  const setupOf = r => ({ n_hour: r.n_hour, n_device: r.n_device, n_on: r.n_on,
-                          noise_sd: r.noise_sd, n_circuit: r.n_circuit,
-                          seed: r.seed });
+  const setupOf = r => ({ n_circuit: r.n_circuit, seed: r.seed });
   const every = n => Math.max(1, Math.round(n / 100));
 
   // ---------------------------------------------------------------- runs
@@ -292,8 +288,9 @@ def estimate(x, y):
     const rec = {
       id: Date.now() + Math.random(), name: label, estimator: name, baseline,
       code, ...setup,
-      accuracy: res.accuracy, accuracy_se: res.accuracy_se,
-      mean_off: res.mean_off, median_off: res.median_off, p90_off: res.p90_off,
+      f1: res.f1, f1_se: res.f1_se,
+      tpr: res.tpr, tpr_se: res.tpr_se, fpr: res.fpr, fpr_se: res.fpr_se,
+      mean_right: res.mean_right, mean_wrong: res.mean_wrong,
       seconds: (performance.now() - t0) / 1000, when: Date.now(),
     };
     saveDetail(rec.id, detailOf(res));
@@ -307,10 +304,10 @@ def estimate(x, y):
     return rec;
   }
 
-  function progressBar(done, n, right, off) {
+  function progressBar(done, n, right, wrong) {
     $("bar").style.width = (100 * done / n) + "%";
-    runMsg(`${done} of ${n} circuits: ${pct(right / done)} right, ` +
-           `${watts(off / done)} watts off on average`);
+    runMsg(`${done} of ${n} circuits: found ${(right / done).toFixed(1)} ` +
+           `of 8, ${(wrong / done).toFixed(1)} wrong on average`);
   }
 
   async function runClicked() {
@@ -336,12 +333,8 @@ def estimate(x, y):
     }
     $("bar").style.width = "100%";
     $("run-name").value = "";
-    const [v] = verdict(rec);
-    runMsg(`Done in ${rec.seconds.toFixed(1)} s: ${pct(rec.accuracy)} right, ` +
-           `${watts(rec.mean_off)} watts off on average` +
-           { yes: " (clears 95%).", no: " (below 95%).",
-             maybe: " (too close to 95% to call)." }[v],
-           v === "yes" ? "ok" : "");
+    runMsg(`Done in ${rec.seconds.toFixed(1)} s: F1 ${rec.f1.toFixed(3)} ` +
+           `(TPR ${pct(rec.tpr)}, FPR ${pct(rec.fpr, 2)}).`, "ok");
     select(rec, false);
   }
 
@@ -361,13 +354,6 @@ def estimate(x, y):
     renderRuns();
   }
 
-  function verdict(r) {
-    const lo = r.accuracy - 2 * r.accuracy_se, hi = r.accuracy + 2 * r.accuracy_se;
-    if (lo >= 0.95) return ["yes", "ok"];
-    if (hi < 0.95) return ["no", "bad"];
-    return ["maybe", "warn"];
-  }
-
   function stamp(t) {
     const d = new Date(t);
     const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -382,12 +368,11 @@ def estimate(x, y):
     { label: "Run", key: r => r.name.toLowerCase() },
     { label: "Circuits", num: true, key: r => r.n_circuit },
     { label: "Seed", num: true, key: r => r.seed },
-    { label: "Right", num: true, key: r => r.accuracy, desc: true },
-    { label: "Avg watts off", num: true, key: r => r.mean_off },
-    { label: "Median", num: true, key: r => r.median_off },
-    { label: "90th pct", num: true, key: r => r.p90_off },
-    { label: "95%?", key: r => ({ yes: 2, maybe: 1, no: 0 })[verdict(r)[0]],
-      desc: true },
+    { label: "F1", num: true, key: r => r.f1, desc: true },
+    { label: "TPR", num: true, key: r => r.tpr, desc: true },
+    { label: "FPR", num: true, key: r => r.fpr },
+    { label: "Found of 8", num: true, key: r => r.mean_right, desc: true },
+    { label: "Wrong", num: true, key: r => r.mean_wrong },
     { label: "Time", num: true, key: r => r.seconds },
     { label: "When", key: r => r.when, desc: true },
     { label: "" },
@@ -450,13 +435,11 @@ def estimate(x, y):
       else tr.insertCell().appendChild(nameInput(r));
       add(r.n_circuit, "num");
       add(r.seed, "num");
-      add(`${pct(r.accuracy)} ± ${(200 * r.accuracy_se).toFixed(1)}`, "num");
-      add(watts(r.mean_off), "num");
-      add(watts(r.median_off), "num");
-      add(watts(r.p90_off), "num");
-      const [v, cls] = verdict(r);
-      add(v).appendChild(Object.assign(document.createElement("i"),
-        { className: "status-dot " + cls }));
+      add(`${r.f1.toFixed(3)} ± ${(2 * r.f1_se).toFixed(3)}`, "num");
+      add(`${pct(r.tpr)} ± ${(200 * r.tpr_se).toFixed(1)}`, "num");
+      add(`${pct(r.fpr, 2)} ± ${(200 * r.fpr_se).toFixed(2)}`, "num");
+      add(r.mean_right.toFixed(1), "num");
+      add(r.mean_wrong.toFixed(1), "num");
       add(r.seconds.toFixed(1) + " s", "num");
       add(stamp(r.when), "muted").title = new Date(r.when).toLocaleString();
 
@@ -505,14 +488,13 @@ def estimate(x, y):
   }
 
   // ----------------------------------------------- per-circuit details
-  // a run's per-circuit results, for its post-mortem: {correct, missed,
-  // false_alarms, named, watts_off, ghost_err}, one entry per circuit. Kept
+  // a run's per-circuit results, for its post-mortem: {right, wrong,
+  // n_named, missed_w}, one entry per circuit (py/runner.py score). Kept
   // in memory and, space allowing, in localStorage; when missing, rebuilt by
   // re-running the run.
   const details = new Map();
   const detailKey = id => PREFIX + "detail." + id;
-  const DETAIL = ["correct", "missed", "false_alarms", "named", "watts_off",
-                  "ghost_err"];
+  const DETAIL = ["right", "wrong", "n_named", "missed_w"];
   const round1 = v => Math.round(v * 10) / 10;
 
   function detailOf(res) {
@@ -521,9 +503,9 @@ def estimate(x, y):
 
   function saveDetail(id, d) {
     details.set(id, d);
-    const packed = JSON.stringify({ c: d.correct.map(Number).join(""),
-      m: d.missed, f: d.false_alarms, n: d.named,
-      o: d.watts_off.map(round1), g: d.ghost_err.map(round1) });
+    // right is 0..8: one digit per circuit
+    const packed = JSON.stringify({ r: d.right.join(""), w: d.wrong,
+      n: d.n_named, m: d.missed_w.map(round1) });
     // full: drop the oldest runs' details (they rebuild when opened)
     const old = [...runs].sort((a, b) => a.when - b.when).map(r => r.id)
       .filter(x => x !== id);
@@ -542,9 +524,8 @@ def estimate(x, y):
     try {
       const p = JSON.parse(localStorage.getItem(detailKey(id)));
       if (!p) return null;
-      const d = { correct: [...p.c].map(ch => ch === "1"), missed: p.m,
-                  false_alarms: p.f, named: p.n, watts_off: p.o,
-                  ghost_err: p.g };
+      const d = { right: [...p.r].map(Number), wrong: p.w, n_named: p.n,
+                  missed_w: p.m };
       details.set(id, d);
       return d;
     } catch (e) { return null; }
@@ -557,7 +538,7 @@ def estimate(x, y):
 
   // ------------------------------------------------- the selected run
   // selects run r (or none): highlights its row, shows its code and its
-  // post-mortem, opening on its first wrong circuit
+  // post-mortem, opening on its first circuit with a wrong device
   function select(r, scroll = true) {
     selectedId = r ? r.id : null;
     store.set("selected", selectedId);
@@ -565,11 +546,9 @@ def estimate(x, y):
     renderCode();
     pmRows = {};
     pmFor = null;
-    pmShown = null;
     $("pm-table-wrap").hidden = true;
     $("wrong-only-box").hidden = true;
     $("results-btn").hidden = true;
-    $("all-shops-box").hidden = true;
     $("pm-plot").replaceChildren();
     if (!r) {
       pmMsg("Click a run above to go through its circuits one by one, with " +
@@ -642,7 +621,7 @@ def estimate(x, y):
   }
 
   // every circuit of the selected run as a CSV, rebuilt by re-running it
-  // (one row per device on the circuit or given watts)
+  // (one row per device on the circuit or named)
   async function downloadResults() {
     const r = selected();
     if (!r || busy) return;
@@ -705,20 +684,21 @@ def estimate(x, y):
   let pmRows = {};      // circuit idx -> its row in the circuits table
   let pmFor = null;     // what the circuits table shows: "id|sort|filter"
   let pmCircuit = null; // the circuit plotted
-  let pmShown = null;   // {res, idx} of the plot, redrawn when a toggle flips
 
   // the circuits table for run r: rebuilt only when the run, sort or filter
   // changes (or force)
   function renderCircuits(r, d, force = false) {
     const wrongOnly = $("wrong-only").checked;
     const key = `${r.id}|${pmSort.col}|${pmSort.dir}|${wrongOnly}`;
-    const nWrong = d.correct.filter(c => !c).length;
-    pmMsg(`${nWrong} of ${r.n_circuit} circuits wrong. Click one to see it.`);
+    const nAll = d.right.filter(k => k === 8).length;
+    const nWrong = d.wrong.filter(k => k > 0).length;
+    pmMsg(`Of ${r.n_circuit} circuits: all 8 found on ${nAll}, a wrong ` +
+          `device named on ${nWrong}. Click one to see it.`);
     if (key === pmFor && !force) return;
     pmFor = key;
     const circuits = [];
     for (let i = 0; i < r.n_circuit; i++) {
-      if (wrongOnly && d.correct[i]) continue;
+      if (wrongOnly && !d.wrong[i]) continue;
       circuits.push({ idx: i, ...Object.fromEntries(DETAIL.map(k => [k, d[k][i]])) });
     }
     $("pm-table-wrap").hidden = false;
@@ -738,7 +718,8 @@ def estimate(x, y):
   }
 
   // what the post-mortem should show once the worker is free: the selected
-  // run, and a circuit of it (null: its first wrong one). Older asks are
+  // run, and a circuit of it (null: its first with a wrong device, else
+  // its first with a device missed). Older asks are
   // dropped.
   let wanted = null, pumping = false;
   function showCircuit(idx) {
@@ -788,8 +769,8 @@ def estimate(x, y):
     }
     if (selected() !== r) return;
     if (idx === null) {
-      const w = d.correct.indexOf(false);
-      idx = w >= 0 ? w : 0;
+      idx = d.wrong.findIndex(k => k > 0);
+      if (idx < 0) idx = Math.max(0, d.right.findIndex(k => k < 8));
     }
     pmCircuit = idx;
     renderCircuits(r, d);
@@ -807,9 +788,7 @@ def estimate(x, y):
     setBusy(false);
     if (stale(r)) return;
     if (!res.ok) { $("pm-plot").textContent = res.error; return; }
-    pmShown = { res, idx };
-    $("all-shops-box").hidden = false;
-    PostMortem.plot($("pm-plot"), res, idx, $("all-shops").checked);
+    PostMortem.plot($("pm-plot"), res, idx);
   }
 
   // -------------------------------------------------------- leaderboard
@@ -1100,13 +1079,6 @@ def estimate(x, y):
     runs = [];
     store.set("runs", runs);
     select(null);
-  };
-  $("all-shops").checked = store.get("allDevices", false);
-  $("all-shops").onchange = () => {
-    store.set("allDevices", $("all-shops").checked);
-    if (pmShown && $("pm-plot").firstChild) {
-      PostMortem.plot($("pm-plot"), pmShown.res, pmShown.idx, $("all-shops").checked);
-    }
   };
   $("wrong-only").checked = store.get("wrongOnly", false);
   $("wrong-only").onchange = () => {

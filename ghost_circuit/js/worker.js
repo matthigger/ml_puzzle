@@ -4,7 +4,7 @@
 // Messages in:  { id, cmd, args }, cmd one of load / run / replay /
 //               results / notebook / unzip
 // Messages out: { id, result } (a JSON string from py/runner.py, or text),
-//               { id, error }, { id, progress: [done, n, right, off] },
+//               { id, error }, { id, progress: [done, n, right, wrong] },
 //               { ready: true } once Python is up, { fatal } if it failed.
 
 // a module worker (see shared/py.js): pyodide.mjs is the supported way in

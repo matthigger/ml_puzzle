@@ -26,10 +26,12 @@ import traceback
 import types
 import zipfile
 
+import math
+
 import numpy as np
 
 import ghost_circuit
-from ghost_circuit import NAMED_W, Circuit, check_watts, score, summarize
+from ghost_circuit import OFFICIAL, GhostCircuit
 
 # folder holding the student's helper .py files (importable by name)
 USER_DIR = '/home/pyodide/user'
@@ -41,38 +43,136 @@ LOAD_CIRCUITS = 20
 # printed output kept from loading the student's code
 MAX_OUTPUT = 20_000
 
+# devices on each circuit and off it: the denominators of TPR and FPR
+N_ON = OFFICIAL['n_on']
+N_OFF = OFFICIAL['n_dev'] - N_ON
+
 namespace = {}
 
 
-def least_squares(x, y):
-    """ Baseline: the least-squares fit (with an always-on term) of the
-    meter on every device; with more devices than hours, the smallest of
-    the many perfect fits. """
+def correlated(x, y):
+    """ Baseline (the puzzle notebook's): every device whose on / off
+    pattern correlates with the meter. """
+    r = np.array([np.corrcoef(x[:, i], y)[0, 1] for i in range(x.shape[1])])
+    return np.flatnonzero(r > .2)
+
+
+def on_minus_off_top8(x, y):
+    """ Baseline: the 8 devices with the biggest gap between the average
+    meter when on and when off. """
+    gap = np.zeros(x.shape[1])
+    for j in range(x.shape[1]):
+        on = x[:, j] == 1
+        if on.any() and (~on).any():
+            gap[j] = y[on].mean() - y[~on].mean()
+    return np.argsort(gap)[-8:]
+
+
+def least_squares_top8(x, y):
+    """ Baseline: the 8 devices given the most watts by least squares
+    (with an always-on term); with more devices than hours, the smallest of
+    its many perfect fits. """
     a = np.column_stack([x, np.ones(len(y))])
-    return np.linalg.lstsq(a, y, rcond=None)[0][:-1]
+    return np.argsort(np.linalg.lstsq(a, y, rcond=None)[0][:-1])[-8:]
 
 
-def on_minus_off(top=None):
-    """ Baseline: each device's average meter when on minus when off; with
-    top, only the top biggest gaps are kept (the rest are 0). """
-    def estimate(x, y):
-        gap = np.zeros(x.shape[1])
-        for j in range(x.shape[1]):
-            on = x[:, j] == 1
-            if on.any() and (~on).any():
-                gap[j] = y[on].mean() - y[~on].mean()
-        if top is not None:
-            gap[np.argsort(gap)[:-top]] = 0
-        return gap
-
-    return estimate
+def every_device(x, y):
+    """ Baseline: name all of them (TPR 100%, and FPR 100%). """
+    return np.arange(x.shape[1])
 
 
 # built in, so they run with or without the student's code; names with
 # spaces can't clash with the student's
-BASELINES = {'least squares': least_squares,
-             'on minus off': on_minus_off(),
-             'on minus off, top 8': on_minus_off(8)}
+BASELINES = {'correlation > 0.2': correlated,
+             'on minus off, top 8': on_minus_off_top8,
+             'least squares, top 8': least_squares_top8,
+             'every device': every_device}
+
+
+def check_guess(guess, n_dev):
+    """ Return the devices an estimate names, or raise if it isn't a list
+    of device numbers.
+
+    Args:
+        guess: what estimate returned
+        n_dev (int): devices on the circuit's log, numbered 0 .. n_dev - 1
+
+    Returns:
+        named (np.array): (n_named,) int, sorted, each device once
+    """
+    if isinstance(guess, (set, frozenset, dict)):
+        guess = sorted(guess)
+    try:
+        g = np.asarray(guess).ravel()
+    except (TypeError, ValueError):
+        g = np.array([None])
+    if g.dtype == bool or (g.size == n_dev and np.isin(g, (0, 1)).all()):
+        raise ValueError(f'estimate returned {g.size} True / False (or 0 / '
+                         '1) values: return the column numbers of the '
+                         'devices you name instead, e.g. '
+                         'np.flatnonzero(keep)')
+    if g.size and g.dtype.kind not in 'iuf':
+        raise TypeError(f'estimate returned {type(guess).__name__}, not a '
+                        'list of device numbers (columns of x)')
+    if g.dtype.kind == 'f' and not np.all(np.isfinite(g)
+                                          & (g == np.round(g))):
+        raise ValueError('estimate returned numbers that are not whole: '
+                         'return device numbers (columns of x), not watts')
+    bad = g[(g < 0) | (g >= n_dev)]
+    if bad.size:
+        raise ValueError(f'estimate named device {int(bad[0])}: devices '
+                         f'are 0 to {n_dev - 1}')
+    return np.unique(g.astype(int))
+
+
+def score(named, circuit):
+    """ How one estimate did on one circuit.
+
+    Args:
+        named (np.array): (n_named,) int, from check_guess
+        circuit (GhostCircuit): hidden truth included
+
+    Returns:
+        result (dict): right / wrong / missed / exact (GhostCircuit.score),
+            n_named, f1 (2 right / (n_named + n_on)), missed_w (watts of
+            the biggest device missed, 0 if none)
+    """
+    s = circuit.score(named)
+    w = circuit._watts.copy()
+    w[named] = 0
+    return dict(s, n_named=len(named), f1=f1(s['right'], s['wrong']),
+                missed_w=float(w.max()))
+
+
+def f1(right, wrong):
+    """ Return F1 on one circuit: 2 right / (named + N_ON), the harmonic
+    mean of precision and TPR (0 when nothing right is named). """
+    return 2 * right / (right + wrong + N_ON)
+
+
+def summarize(right, wrong):
+    """ The run's summary: F1, TPR and FPR averaged over its circuits.
+
+    Args:
+        right (list): int per circuit, devices named that are on it
+        wrong (list): int per circuit, devices named that aren't
+
+    Returns:
+        result (dict): f1, tpr, fpr, their standard errors f1_se, tpr_se,
+            fpr_se, and mean_right, mean_wrong (devices per circuit)
+    """
+    tpr = np.asarray(right) / N_ON
+    fpr = np.asarray(wrong) / N_OFF
+    f = f1(np.asarray(right), np.asarray(wrong))
+    n = len(tpr)
+
+    def se(v):
+        return float(v.std(ddof=1) / math.sqrt(n)) if n > 1 else 0.
+
+    return dict(f1=float(f.mean()), f1_se=se(f),
+                tpr=float(tpr.mean()), tpr_se=se(tpr), fpr=float(fpr.mean()),
+                fpr_se=se(fpr), mean_right=float(np.mean(right)),
+                mean_wrong=float(np.mean(wrong)))
 
 
 def lookup(name):
@@ -201,7 +301,7 @@ def load(source, helpers):
     os.chdir(USER_DIR)
     os.environ['MPLBACKEND'] = 'Agg'
 
-    def quick_evaluate(estimate, n_circuit=1000, *args, **kwargs):
+    def quick_evaluate(estimate, n_circuit=20, *args, **kwargs):
         return evaluate(estimate, min(n_circuit, LOAD_CIRCUITS), *args,
                         **kwargs)
 
@@ -244,25 +344,23 @@ def load(source, helpers):
                            error=error))
 
 
-def sample(setup, seed, idx):
-    """ Return circuit idx of a setup: the same circuits evaluate() uses. """
-    keys = ('n_hour', 'n_device', 'n_on', 'noise_sd')
-    return Circuit.sample(**{k: setup[k] for k in keys},
-                          seed=seed * 1_000_003 + idx)
+def sample(seed, idx):
+    """ Return circuit idx of a seed: the same circuits evaluate() uses. """
+    return GhostCircuit.sample(**OFFICIAL, seed=seed * 1_000_003 + idx)
 
 
 def call(estimate, circuit, idx):
     """ Run estimate on one circuit (on copies of its data).
 
     Returns:
-        w_hat (np.array): (n_device,) estimated watts
+        named (np.array): (n_named,) int, the devices it names
 
     Raises:
         RuntimeError: says which circuit went wrong and how
     """
     try:
-        return check_watts(estimate(circuit.x.copy(), circuit.y.copy()),
-                           circuit.n_device)
+        return check_guess(estimate(circuit.x.copy(), circuit.y.copy()),
+                           circuit.n_dev)
     except Exception as exc:
         raise RuntimeError(f'circuit {idx}: ' + user_error(exc, 'your code'))
 
@@ -272,78 +370,71 @@ def run(name, setup, progress=None, every=10):
 
     Args:
         name (str): an estimator listed by load(), or a key of BASELINES
-        setup (str): JSON {n_hour, n_device, n_on, noise_sd, n_circuit,
-            seed}
-        progress (callable): progress(done, n_circuit, n_right, watts_off),
+        setup (str): JSON {n_circuit, seed}
+        progress (callable): progress(done, n_circuit, n_right, n_wrong),
             if given, is called every few circuits
         every (int): circuits between progress calls
 
     Returns:
-        JSON {ok, error} plus, when ok: accuracy, accuracy_se, mean_off,
-            median_off, p90_off, seconds, and one entry per circuit in each
-            of the lists correct, missed, false_alarms, named, watts_off,
-            ghost_err (see ghost_circuit.score)
+        JSON {ok, error} plus, when ok: summarize()'s fields, seconds, and
+            one entry per circuit in each of the lists right, wrong,
+            n_named, missed_w (see score)
     """
     setup = json.loads(setup)
     estimate = lookup(name)
     n_circuit, seed = setup['n_circuit'], setup['seed']
-    keys = ('correct', 'missed', 'false_alarms', 'named', 'watts_off',
-            'ghost_err')
+    keys = ('right', 'wrong', 'n_named', 'missed_w')
     out = {k: [] for k in keys}
     start = time.perf_counter()
     try:
         for idx in range(n_circuit):
-            circuit = sample(setup, seed, idx)
+            circuit = sample(seed, idx)
             s = score(call(estimate, circuit, idx), circuit)
             for k in keys:
                 out[k].append(s[k])
             if progress is not None and (idx + 1) % every == 0:
-                progress(idx + 1, n_circuit, sum(out['correct']),
-                         sum(out['watts_off']))
+                progress(idx + 1, n_circuit, sum(out['right']),
+                         sum(out['wrong']))
     except RuntimeError as exc:
         return json.dumps(dict(ok=False, error=str(exc)))
 
     return json.dumps(dict(ok=True, error=None,
                            seconds=time.perf_counter() - start,
-                           **summarize(out['correct'], out['watts_off']),
-                           **out))
+                           **summarize(out['right'], out['wrong']), **out))
 
 
 def replay(name, setup, idx):
     """ Return circuit idx of a setup, with the hidden truth revealed.
 
     Returns:
-        JSON {ok, error} plus, when ok: w, w_hat ((n_device,) true and
-            estimated watts), y ((n_hour,) the meter), load ((n_hour,) the
-            meter without its noise), fit ((n_hour,) x @ w_hat + b_hat),
-            b_hat (the best always-on load for w_hat), base, noise_sd,
-            ghost, ghost_on ((n_hour,) 0 / 1), and score()'s fields
+        JSON {ok, error} plus, when ok: w ((n_dev,) true watts, 0 off the
+            circuit), named (the devices named), y ((n_hour,) the meter),
+            x ((n_dev,) str, each device's log as n_hour '0' / '1'
+            characters, for the page's own fits), baseline, noise, and
+            score()'s fields
     """
     setup = json.loads(setup)
-    circuit = sample(setup, setup['seed'], idx)
+    circuit = sample(setup['seed'], idx)
     try:
-        w_hat = call(lookup(name), circuit, idx)
+        named = call(lookup(name), circuit, idx)
     except RuntimeError as exc:
         return json.dumps(dict(ok=False, error=str(exc)))
-    x, y, w = circuit.x, circuit.y, circuit._watts
-    b_hat = float(np.mean(y - x @ w_hat))
-    g = circuit._ghost
     return json.dumps(dict(
-        ok=True, error=None, w=w.tolist(), w_hat=w_hat.tolist(),
-        y=y.tolist(), load=(x @ w + circuit._base).tolist(),
-        fit=(x @ w_hat + b_hat).tolist(), b_hat=b_hat, base=circuit._base,
-        noise_sd=circuit._noise_sd, ghost_on=x[:, g].tolist(),
-        **score(w_hat, circuit)))
+        ok=True, error=None, w=circuit._watts.tolist(),
+        named=named.tolist(), y=circuit.y.tolist(),
+        x=[''.join(map(str, col)) for col in circuit.x.T],
+        baseline=OFFICIAL['baseline'], noise=OFFICIAL['noise'],
+        **score(named, circuit)))
 
 
 def results(name, setup, run_name, progress=None, every=10):
     """ Return every circuit of a run as CSV, one row per device that is
-    on the circuit or got a nonzero estimate (the rest have w = w_hat = 0),
-    the run's columns repeated on each row.
+    on the circuit or named (every other device has w = 0, named = 0), the
+    run's and circuit's columns repeated on each row.
 
-    CSV columns: puzzle, run, estimator, seed, circuit, device, w, w_hat,
-    on_circuit, big, named, ghost, circuit_right, missed, false_alarms,
-    watts_off, base, noise_sd.
+    CSV columns: puzzle, run, estimator, seed, circuit, device, w,
+    on_circuit, named, circuit_right, circuit_wrong, circuit_named,
+    circuit_f1.
 
     Args:
         name (str): the estimator, as for run()
@@ -360,23 +451,20 @@ def results(name, setup, run_name, progress=None, every=10):
     out = io.StringIO()
     rows = csv.writer(out, lineterminator='\n')
     rows.writerow(['puzzle', 'run', 'estimator', 'seed', 'circuit',
-                   'device', 'w', 'w_hat', 'on_circuit', 'big', 'named',
-                   'ghost', 'circuit_right', 'missed', 'false_alarms',
-                   'watts_off', 'base', 'noise_sd'])
+                   'device', 'w', 'on_circuit', 'named', 'circuit_right',
+                   'circuit_wrong', 'circuit_named', 'circuit_f1'])
     try:
         for idx in range(n_circuit):
-            circuit = sample(setup, seed, idx)
-            w_hat = call(estimate, circuit, idx)
-            s, w = score(w_hat, circuit), circuit._watts
-            for j in np.flatnonzero((w != 0) | (w_hat != 0)):
+            circuit = sample(seed, idx)
+            named = call(estimate, circuit, idx)
+            s, w = score(named, circuit), circuit._watts
+            is_named = np.isin(np.arange(circuit.n_dev), named)
+            for j in np.flatnonzero((w > 0) | is_named):
                 rows.writerow([
                     'ghost_circuit', run_name, name, seed, idx, int(j),
-                    round(float(w[j]), 2), round(float(w_hat[j]), 2),
-                    int(w[j] > 0), int(w[j] >= ghost_circuit.BIG_W),
-                    int(w_hat[j] >= NAMED_W), int(j == s['ghost']),
-                    int(s['correct']), s['missed'], s['false_alarms'],
-                    round(s['watts_off'], 2), round(circuit._base, 2),
-                    circuit._noise_sd])
+                    round(float(w[j]), 2), int(w[j] > 0), int(is_named[j]),
+                    s['right'], s['wrong'], s['n_named'],
+                    round(s['f1'], 4)])
             if progress is not None and (idx + 1) % every == 0:
                 progress(idx + 1, n_circuit)
     except RuntimeError as exc:

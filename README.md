@@ -9,7 +9,7 @@ leaderboard that we re-run ourselves.
 |-----|--------|----------------|
 | Slice Crawl | [`slice_crawl/`](slice_crawl/README.md) | `estimate(crawl)`: the best shop, tasting few slices |
 | Where Did It Start? | [`where_start/`](where_start/README.md) | `estimate(stations, arrivals)`: the epicenter |
-| Ghost on the Circuit | [`ghost_circuit/`](ghost_circuit/README.md) | `estimate(x, y)`: each device's watts |
+| Ghost on the Circuit | [`ghost_circuit/`](ghost_circuit/README.md) | `estimate(x, y)`: the devices on the circuit |
 
 Each puzzle page has the same parts: the code (typed, or dropped `.py` /
 `.ipynb` / `.zip` files), a run on N seeded instances, a sortable runs
