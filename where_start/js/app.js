@@ -797,31 +797,41 @@ def estimate(stations, arrivals):
   }
 
   // -------------------------------------------------------- leaderboard
-  // the board shown: its code is remembered in this browser
-  async function refreshBoard() {
+  // the board shown: its code is remembered in this browser. While this
+  // browser's entry waits for its re-run, the board reloads itself quietly
+  let boardTimer = null;
+  async function refreshBoard(quiet = false) {
+    clearTimeout(boardTimer);
     const code = store.get("boardCode", "");
     $("board-code").value = code;
     if (!Board.enabled) {
       $("board-msg").textContent = "The leaderboard isn't connected yet.";
       return;
     }
-    $("board-wrap").hidden = true;
-    $("board-title").hidden = true;
+    if (!quiet) {
+      $("board-wrap").hidden = true;
+      $("board-title").hidden = true;
+    }
     if (!code) {
       $("board-msg").textContent = "Enter your class's code to see its " +
         "leaderboard.";
       return;
     }
-    $("board-msg").textContent = "Loading...";
+    if (!quiet) $("board-msg").textContent = "Loading...";
     try {
       const board = await Board.list(code);
       $("board-title").textContent = board.title +
         (board.open ? "" : " (closed: no new entries)");
       $("board-title").hidden = false;
       $("board-wrap").hidden = false;
-      Board.render($("board").tBodies[0], board.entries);
+      const waiting = Board.render($("board").tBodies[0], board.entries);
       $("board-msg").textContent = board.entries.length ? ""
         : "No entries yet: be the first.";
+      if (waiting && mode === "board") {
+        boardTimer = setTimeout(() => {
+          if (mode === "board") refreshBoard(true);
+        }, 15000);
+      }
     } catch (e) {
       $("board-msg").textContent = e.message;
     }
@@ -1097,7 +1107,7 @@ def estimate(stations, arrivals):
   $("post-form").onsubmit = submitPost;
   $("post-cancel").onclick = () => $("post-dialog").close();
   $("remove-btn").onclick = removeClicked;
-  $("refresh-btn").onclick = refreshBoard;
+  $("refresh-btn").onclick = () => refreshBoard();
   $("board-form").onsubmit = e => {
     e.preventDefault();
     store.set("boardCode", $("board-code").value.trim());

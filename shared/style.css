@@ -367,6 +367,7 @@ table.runs {
 .runs th[aria-sort="ascending"] button.sort::after { content: " \25B2"; }
 .runs th[aria-sort="descending"] button.sort::after { content: " \25BC"; }
 .runs tr.mine td { font-weight: 700; background: #f3f6ff; }
+.runs td.when { white-space: nowrap; }
 .runs tr.gap td {
   color: var(--muted);
   font-size: .78rem;

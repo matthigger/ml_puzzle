@@ -9,7 +9,8 @@
 //   Board.post(entry)        add or replace this browser's entry (entry.code
 //                            names the board)
 //   Board.remove(code)       delete this browser's entry on that board
-//   Board.render(tbody, entries)
+//   Board.render(tbody, entries)  -> true while this browser's entry
+//                                 waits for (or is in) its re-run
 //
 // An entry belongs to a random token kept in this browser's localStorage;
 // the database stores only its hash.
@@ -51,11 +52,37 @@ const Board = (function () {
   const remove = code => rpc("delete_entry", { project, code, token: token() });
   const post = e => rpc("post_entry", { ...e, project, token: token() });
 
+  // a time in the viewer's own zone, the day only if it isn't today
+  function when(t) {
+    const d = new Date(t);
+    const time = d.toLocaleTimeString("en-US",
+      { hour: "numeric", minute: "2-digit" });
+    if (d.toDateString() === new Date().toDateString()) return time;
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+      ", " + time;
+  }
+
+  // an entry's status and when it got there, then (for the hover) every
+  // step so far
+  function progress(e) {
+    const steps = ["posted " + when(e.updated_at)];
+    if (e.started_at) steps.push("started " + when(e.started_at));
+    const ended = { done: "scored", failed: "failed", overtime: "stopped" };
+    if (ended[e.status]) {
+      steps.push(ended[e.status] + " " + when(e.rerun_at || e.updated_at));
+      return [steps[steps.length - 1], steps.join("\n")];
+    }
+    if (e.started_at) return ["running since " + when(e.started_at),
+                              steps.join("\n")];
+    return [steps[0], steps[0]];
+  }
+
   // entries arrive re-run scores first (best first), then the ones still
-  // waiting; a failed re-run comes back only to its owner, with the reason
+  // waiting; a failed (or overtime) re-run comes back only to its owner,
+  // with the reason
   function render(tbody, entries) {
     tbody.replaceChildren();
-    let rank = 0, section = null;
+    let rank = 0, section = null, mineWaiting = false;
     for (const e of entries) {
       const done = e.status === "done", clears = done && e.qualifies;
       const m = e.metrics || {};
@@ -83,15 +110,18 @@ const Board = (function () {
       if (done) {
         for (const v of PUZZLE.scores(m)) add(v, "num");
       } else {
-        const td = add(e.status === "failed"
-          ? "Your re-run failed: " + (e.error || "").trim().split("\n").pop()
-          : "re-running soon", "muted");
+        const why = (e.error || "").trim().split("\n").pop();
+        const td = add(e.status === "failed" ? "Your re-run failed: " + why
+          : e.status === "overtime" ? "Your re-run " + why
+          : e.started_at ? "Re-running now" : "Waiting for a re-run", "muted");
         td.colSpan = 4;
         if (e.error) td.title = e.error;
       }
-      add(new Date(e.updated_at).toLocaleDateString("en-US",
-        { month: "short", day: "numeric" }));
+      const [now, steps] = progress(e);
+      add(now, "when").title = steps;
+      if (e.mine && e.status === "pending") mineWaiting = true;
     }
+    return mineWaiting;
   }
 
   return { enabled, list, post, remove, render };
