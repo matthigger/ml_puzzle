@@ -7,14 +7,15 @@
 //   PostMortem.plot(host, result, idx)      result: runner.replay()'s output
 //
 // The plot lists the devices named as chips (at first: your estimate's),
-// each with a − to remove it, and a + to add one. Every change refits
+// each with a − to remove it, and a + to add one; each device is TP / FP
+// / FN / TN (named or not, on the circuit or not). Every change refits
 // least squares on the devices listed, plus an always-on load, and redraws
 // each hour: the meter (observed) as a dot, the fit (estimated) as a bar,
 // the error between them as a line; MSE = mean squared error.
 //
 // Notation, the same in the table, the plot and their hover text: w_j is
-// device j's true watts (0 off the circuit); TPR = found / 8, FPR = wrong
-// / 142, F1 = 2 found / (named + 8).
+// device j's true watts (0 off the circuit), w-hat_j its fitted watts;
+// TPR = TP / (TP + FN), FPR = FP / (FP + TN), F1 = 2TP / (2TP + FP + FN).
 
 const PostMortem = (function () {
   const NS = "http://www.w3.org/2000/svg";
@@ -70,17 +71,17 @@ const PostMortem = (function () {
     { label: "Found", num: true, key: c => c.right,
       node: c => c.right === N_ON ? badge("all 8", "ok")
                                   : document.createTextNode(`${c.right} of 8`),
-      help: `Devices you named that are on the circuit, of its ${N_ON}. ` +
-            `TPR = found / ${N_ON}.` },
+      help: `TP: devices you named that are on the circuit, of its ` +
+            `${N_ON} (TP + FN = ${N_ON}). TPR = TP / (TP + FN).` },
     { label: "Wrong", num: true, key: c => c.wrong, text: c => c.wrong || "",
-      help: `Devices you named that aren't on the circuit (${WJ} = 0). ` +
-            `FPR = wrong / ${N_OFF}.` },
+      help: `FP: devices you named that aren't on the circuit ` +
+            `(${WJ} = 0). FPR = FP / (FP + TN) = FP / ${N_OFF}.` },
     { label: "Named", num: true, key: c => c.n_named, text: c => c.n_named,
-      help: "How many devices you named." },
+      help: "How many devices you named: TP + FP." },
     { label: "F1", num: true, key: c => f1(c.right, c.n_named),
       text: c => f1(c.right, c.n_named).toFixed(2),
-      help: `2 × found / (named + ${N_ON}): high only when you find ` +
-            "most devices and name few wrong ones." },
+      help: "2TP / (2TP + FP + FN): high only when you find most " +
+            "devices and name few wrong ones." },
     { label: "Biggest miss", num: true, key: c => c.missed_w,
       text: c => c.missed_w ? watts(c.missed_w) + " W" : "",
       help: "True watts of the biggest device on the circuit you didn't " +
@@ -301,9 +302,12 @@ const PostMortem = (function () {
              `mean (observed − estimated)²; noise alone ≈ ` +
              `${watts(res.noise ** 2)} W²`, "gc-mse"),
         stat("F1", f1(right, on.length).toFixed(2),
-             `2 × ${right} / (${on.length} named + ${N_ON})`),
-        stat("TPR", pct(right / N_ON), `${right} of ${N_ON} found`),
-        stat("FPR", pct(wrong / N_OFF, 1), `${wrong} of ${N_OFF} wrong`));
+             `2TP / (2TP + FP + FN) = ${2 * right} / ` +
+             `(${2 * right} + ${wrong} + ${N_ON - right})`),
+        stat("TPR", pct(right / N_ON),
+             `TP / (TP + FN) = ${right} / ${N_ON}`),
+        stat("FPR", pct(wrong / N_OFF, 1),
+             `FP / (FP + TN) = ${wrong} / ${N_OFF}`));
       host.appendChild(stats);
 
       host.appendChild(chips(fitRes));
@@ -327,8 +331,11 @@ const PostMortem = (function () {
       const note = document.createElement("p");
       note.className = "hint";
       note.textContent = "Estimated: least squares of the meter on the " +
-        "devices listed, plus an always-on load. Each chip shows its " +
-        "device's fitted watts ± 2 standard errors.";
+        "devices listed, plus an always-on load. On each chip, ŵ is that " +
+        "fit's watts for the device (its estimate of the true w) and ± " +
+        "is 2 standard errors, the spread the meter's noise alone gives " +
+        "ŵ (devices left out can bias ŵ beyond it). TP: named, on the " +
+        "circuit; FP: named, not on it; FN: on it, not named; TN: neither.";
       host.appendChild(note);
     }
 
@@ -340,12 +347,14 @@ const PostMortem = (function () {
         const c = document.createElement("span");
         const hit = res.w[j] > 0;
         c.className = "chip gc-chip " + (hit ? "gc-chip-found" : "gc-chip-wrong");
-        c.title = hit ? `${dev(j)} is on the circuit: ${watts(res.w[j])} W true`
-                      : `${dev(j)} is not on the circuit`;
+        c.title = (hit ? `TP: named and on the circuit (true w = ` +
+                         `${watts(res.w[j])} W)`
+                       : "FP: named but not on the circuit (true w = 0)") +
+          ". ŵ ± 2 SE: its least-squares fitted watts.";
         const f = !fitRes.error && fitRes.w[j];
         c.innerHTML = `<span>${dev(j)}</span>` +
-          `<span class="gc-chip-w">${f ? `${watts(f[0])} ± ${watts(2 * f[1])} W` : ""}</span>` +
-          `<span class="badge ${hit ? "ok" : "bad"}">${hit ? "found" : "wrong"}</span>`;
+          `<span class="gc-chip-w">${f ? `ŵ = ${watts(f[0])} ± ${watts(2 * f[1])} W` : ""}</span>` +
+          `<span class="badge ${hit ? "ok" : "bad"}">${hit ? "TP" : "FP"}</span>`;
         const minus = document.createElement("button");
         minus.className = "gc-chip-x";
         minus.textContent = "−";
@@ -365,8 +374,7 @@ const PostMortem = (function () {
         box.appendChild(plus);
         return box;
       }
-      // devices not listed: the circuit's missed ones (biggest first), then
-      // the rest by number
+      // devices not listed: FN (on the circuit, biggest first), then TN
       const sel = document.createElement("select");
       sel.className = "gc-pick";
       sel.setAttribute("aria-label", "Device to add");
@@ -374,10 +382,10 @@ const PostMortem = (function () {
       const rest = res.w.map((_, j) => j).filter(j => !on.includes(j));
       const missed = rest.filter(j => res.w[j] > 0)
         .sort((a, b) => res.w[b] - res.w[a]);
-      const groups = [["Missed (on the circuit)", missed,
-                       j => `${dev(j)} (${watts(res.w[j])} W true)`],
-                      ["Not on the circuit", rest.filter(j => !(res.w[j] > 0)),
-                       dev]];
+      const groups = [["FN: on the circuit, not named", missed,
+                       j => `${dev(j)} (true w = ${watts(res.w[j])} W)`],
+                      ["TN: not on the circuit, not named",
+                       rest.filter(j => !(res.w[j] > 0)), dev]];
       for (const [label, ids, text] of groups) {
         if (!ids.length) continue;
         const g = document.createElement("optgroup");
