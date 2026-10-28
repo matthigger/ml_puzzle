@@ -27,14 +27,13 @@ to the metered circuit (20 to 1500 W), the meter's hourly watts (`y`,
   post-mortem: the code (Copy, Download, Use this code), a sortable table
   with a row per circuit (found, wrong, named, F1, biggest miss; "circuits
   with a wrong device" filters it), "Download results" (a CSV, below),
-  and, for the circuit clicked, an interactive stack: the devices on the
-  circuit or named, each switched on or off (at first as the estimate
-  named them; more added by number). Every change refits least squares
-  on the devices switched on plus an always-on load, in the page, and
-  redraws F1 / TPR / FPR, the leftover (meter minus fit), each device's
-  fitted watts ± 2 SE, and the stack: each hour's fitted watts split into
-  the devices that were on, the meter as dots. "True watts" stacks the
-  hidden watts instead (missed devices hatched). "Add baselines" runs the notebook's
+  and, for the circuit clicked, an interactive fit: the devices named as
+  chips (at first the estimate's), each with a − to remove it, and a + to
+  add one (missed devices listed first). Every change refits least
+  squares on the devices listed plus an always-on load, in the page, and
+  redraws MSE, F1 / TPR / FPR, each device's fitted watts ± 2 SE, and the
+  plot: each hour's meter (observed, black dot), fit (estimated, green
+  bar) and error (red line). "Add baselines" runs the notebook's
   correlation guess, two top-8 rules (on minus off, least squares) and
   "every device". The baselines are naive on purpose: puzzle prompts name
   no tools.
@@ -83,11 +82,11 @@ python3 verify/verify.py --local my_code.py --helper helpers.py
 | file | role |
 |------|------|
 | `index.html` | page, help text, controls |
-| `puzzle.css` | its post-mortem stack styles |
+| `puzzle.css` | its post-mortem plot styles |
 | `js/puzzle.js` | its project id, bar and board columns |
 | `js/app.js` | editor and files, runs table, post-mortem flow, CSV, posting, tabs |
 | `js/worker.js` | module web worker: Pyodide, runs `py/runner.py` |
-| `js/postmortem.js` | a run's circuits table, one circuit's interactive stack (least squares in JS) |
+| `js/postmortem.js` | a run's circuits table, one circuit's interactive fit (least squares in JS) |
 | `py/runner.py` | load / run / replay / results for the student's code; TPR / FPR / F1 |
 | `py/ghost_circuit.py` | the notebook's circuit generator, `score()`, `evaluate()` |
 | `verify/verify.py` | re-run waiting entries, write back their scores |

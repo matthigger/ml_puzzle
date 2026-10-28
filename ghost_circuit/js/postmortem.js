@@ -1,22 +1,20 @@
 // PostMortem: one run, circuit by circuit. A sortable table with a row per
-// circuit, and one circuit as an interactive stack with the hidden truth
+// circuit, and one circuit as an interactive fit with the hidden truth
 // revealed.
 //
 //   PostMortem.table(table, circuits, opts) -> {idx: tr} of the rows drawn
 //   PostMortem.mark(rows, idx)              highlight circuit idx's row
 //   PostMortem.plot(host, result, idx)      result: runner.replay()'s output
 //
-// The plot lists the devices named and the devices on the circuit, each
-// switched on or off (at first: on if your estimate named it). Every
-// change refits least squares on the devices switched on, plus an
-// always-on load, and redraws the stack: each hour's fitted watts split
-// into the devices that were on, the meter's reading as a dot. "The truth"
-// stacks the hidden watts instead.
+// The plot lists the devices named as chips (at first: your estimate's),
+// each with a − to remove it, and a + to add one. Every change refits
+// least squares on the devices listed, plus an always-on load, and redraws
+// each hour: the meter (observed) as a dot, the fit (estimated) as a bar,
+// the error between them as a line; MSE = mean squared error.
 //
 // Notation, the same in the table, the plot and their hover text: w_j is
-// device j's true watts (0 off the circuit), w-hat_j its fitted watts; TPR
-// = found / 8, FPR = wrong / 142, F1 = 2 found / (named + 8); y_t is the
-// meter in hour t.
+// device j's true watts (0 off the circuit); TPR = found / 8, FPR = wrong
+// / 142, F1 = 2 found / (named + 8).
 
 const PostMortem = (function () {
   const NS = "http://www.w3.org/2000/svg";
@@ -183,7 +181,7 @@ const PostMortem = (function () {
   }
 
   // least squares of the meter y on devices ids plus an always-on term:
-  // {b, w: {j: [w_hat, se]}, fit, rms}, or {error}
+  // {b, w: {j: [w_hat, se]}, fit, mse}, or {error}
   function ols(x, y, ids) {
     const n = y.length, p = ids.length + 1;
     if (p > n - 2) {
@@ -206,48 +204,18 @@ const PostMortem = (function () {
     const s2 = rss / (n - p);
     const w = {};
     ids.forEach((j, k) => { w[j] = [beta[k], Math.sqrt(s2 * inv[k][k])]; });
-    return { b: beta[p - 1], w, fit, rms: Math.sqrt(rss / n) };
+    return { b: beta[p - 1], w, fit, mse: rss / n };
   }
 
-  // what device j is, given the devices switched on
-  function status(res, on, j) {
-    if (res.w[j] > 0) return on.has(j) ? "found" : "missed";
-    return on.has(j) ? "wrong" : "out";
-  }
-  const STATUS = { found: ["FOUND", "ok"], missed: ["MISSED", "bad"],
-                   wrong: ["WRONG", "bad"], out: ["LEFT OUT", "muted"] };
 
-  function stack(host, res, x, on, fitRes, truth, focus, onFocus) {
+  function bars(host, res, fitRes) {
     const T = res.y.length, plotW = W - L - R, bw = plotW / T;
     const H = TOP + PH + AXIS;
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "pm-plot",
-      role: "img", "aria-label": truth
-        ? "The meter hour by hour, split into the devices truly on it"
-        : "The meter hour by hour and the fit from the devices switched on" });
-    const defs = el("defs", {}, svg);
-    const hid = "gc-hatch-" + Math.random().toString(36).slice(2, 8);
-    const pat = el("pattern", { id: hid, width: 4, height: 4,
-      patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
-    el("line", { x1: 0, y1: 0, x2: 0, y2: 4, class: "gc-hatch-line" }, pat);
-
-    // each hour: [base, segments {j, lo, hi}]
-    const ids = truth ? Object.keys(res.w).map(Number).filter(j => res.w[j] > 0)
-                      : [...on];
-    const watt = j => truth ? res.w[j] : fitRes.w[j][0];
-    ids.sort((a, b) => watt(b) - watt(a));
-    const base = truth ? res.baseline : fitRes.b;
-    const hours = res.y.map((_, t) => {
-      let up = base, down = base;
-      const segs = [];
-      for (const j of ids) {
-        if (!x[j][t]) continue;
-        const w = watt(j);
-        if (w >= 0) { segs.push({ j, lo: up, hi: up + w }); up += w; }
-        else { segs.push({ j, lo: down + w, hi: down, neg: true }); down += w; }
-      }
-      return { segs, top: up, bottom: Math.min(0, down) };
-    });
-    const vals = [...res.y, ...hours.map(h => h.top), ...hours.map(h => h.bottom), 0];
+      role: "img", "aria-label": "The meter hour by hour, the estimate " +
+        "from the devices named, and the error between them" });
+    const fit = fitRes.fit;
+    const vals = [...res.y, ...fit, 0];
     const s = step(Math.max(...vals) - Math.min(...vals), 5);
     const lo = Math.floor(Math.min(...vals) / s) * s;
     const hi = Math.ceil(Math.max(...vals) * 1.03 / s) * s;
@@ -258,29 +226,20 @@ const PostMortem = (function () {
                    class: "pm-ticklabel" }, svg).textContent = watts(v);
     }
     const gap = Math.min(1.2, bw * .18);
-    hours.forEach((h, t) => {
-      const x0 = L + t * bw + gap / 2, w0 = bw - gap;
-      if (base > 0) {
-        el("rect", { x: x0, y: sy(base), width: w0, height: sy(0) - sy(base),
-                     class: "gc-base" }, svg);
-      }
-      for (const g of h.segs) {
-        const st = status(res, on, g.j);
-        const r = el("rect", { x: x0, y: sy(g.hi), width: w0,
-          height: Math.max(.5, sy(g.lo) - sy(g.hi)),
-          class: `gc-seg gc-${st}${g.neg ? " gc-neg" : ""}` +
-                 (focus !== null && focus !== g.j ? " gc-fade" : "") }, svg);
-        if (st === "missed") r.setAttribute("fill", `url(#${hid})`);
-        el("title", {}, r).textContent = `${dev(g.j)}, hour ${t}: ` +
-          `${watts(watt(g.j))} W ${truth ? "(true)" : "(fitted)"}`;
-        r.addEventListener("click", () => onFocus(g.j));
-      }
-    });
     res.y.forEach((v, t) => {
-      const c = el("circle", { cx: L + (t + .5) * bw, cy: sy(v), r: 2.4,
-                               class: "gc-y" }, svg);
-      el("title", {}, c).textContent = `hour ${t}: meter ${watts(v)} W` +
-        (truth || !fitRes.fit ? "" : `, fit ${watts(fitRes.fit[t])} W`);
+      const x0 = L + t * bw, cx = x0 + bw / 2;
+      el("rect", { x: x0 + gap / 2, y: sy(Math.max(0, fit[t])),
+        width: bw - gap, height: Math.abs(sy(0) - sy(fit[t])),
+        class: "gc-est" }, svg);
+      el("line", { x1: cx, x2: cx, y1: sy(fit[t]), y2: sy(v),
+                   class: "gc-err" }, svg);
+      el("circle", { cx, cy: sy(v), r: 2.4, class: "gc-y" }, svg);
+      // a full-height strip per hour carries the hover text
+      const hit = el("rect", { x: x0, y: TOP, width: bw, height: PH,
+                               class: "gc-hit" }, svg);
+      el("title", {}, hit).textContent = `hour ${t}: observed ` +
+        `${watts(v)} W, estimated ${watts(fit[t])} W, error ` +
+        `${watts(v - fit[t])} W`;
     });
     for (let t = 0; t < T; t += 12) {
       el("text", { x: L + t * bw, y: TOP + PH + 18, "text-anchor": "middle",
@@ -294,9 +253,9 @@ const PostMortem = (function () {
     host.appendChild(wrap);
   }
 
-  function stat(label, value, sub) {
+  function stat(label, value, sub, cls = "") {
     const d = document.createElement("div");
-    d.className = "gc-stat";
+    d.className = "gc-stat " + cls;
     d.innerHTML = `<span class="gc-stat-label">${label}</span>` +
       `<span class="gc-stat-value">${value}</span>` +
       `<span class="gc-stat-sub">${sub}</span>`;
@@ -304,156 +263,141 @@ const PostMortem = (function () {
   }
 
   function plot(host, res, idx) {
-    // devices listed: on the circuit (biggest first), then the others
-    // named; more can be added by number
     const x = res.x.map(col => [...col].map(Number));
     const yours = new Set(res.named);
-    const listed = [
-      ...Object.keys(res.w).map(Number).filter(j => res.w[j] > 0)
-        .sort((a, b) => res.w[b] - res.w[a]),
-      ...res.named.filter(j => !(res.w[j] > 0))];
-    let on = new Set(res.named), truth = false, focus = null;
+    // chips in the order named; added devices go to the end
+    let on = [...res.named], adding = false;
 
     function draw() {
       host.replaceChildren();
-      const ids = [...on];
-      const fitRes = ols(x, res.y, ids);
-      const right = ids.filter(j => res.w[j] > 0).length;
-      const wrong = ids.length - right;
-      const edited = on.size !== yours.size || ids.some(j => !yours.has(j));
+      const fitRes = ols(x, res.y, on);
+      const right = on.filter(j => res.w[j] > 0).length;
+      const wrong = on.length - right;
+      const edited = on.length !== yours.size || on.some(j => !yours.has(j));
 
       const head = document.createElement("div");
       head.className = "gc-head";
       const h = document.createElement("p");
       h.className = "replay-head";
       h.textContent = `Circuit ${idx}: ` + (edited
-        ? `your edit names ${on.size} device${on.size === 1 ? "" : "s"}. ` +
+        ? `your edit names ${on.length} device${on.length === 1 ? "" : "s"}. ` +
           `Your estimate named ${yours.size} (F1 ${f1(res.right, res.n_named).toFixed(2)}).`
-        : `your estimate named ${on.size} device${on.size === 1 ? "" : "s"}. ` +
-          "Switch devices on or off to see how the fit and the scores change.");
+        : `your estimate named ${on.length} device${on.length === 1 ? "" : "s"}. ` +
+          "Add or remove devices to see how the fit and the scores change.");
       head.appendChild(h);
       if (edited) {
         const b = document.createElement("button");
         b.textContent = "Back to your estimate";
-        b.onclick = () => { on = new Set(res.named); draw(); };
+        b.onclick = () => { on = [...res.named]; adding = false; draw(); };
         head.appendChild(b);
       }
       host.appendChild(head);
 
+      const mse = fitRes.error ? null : fitRes.mse;
       const stats = document.createElement("div");
       stats.className = "gc-stats";
       stats.append(
-        stat("F1", f1(right, on.size).toFixed(2), `2 × ${right} / (${on.size} named + ${N_ON})`),
+        stat("MSE", mse === null ? "—" : `${watts(mse)} W²`,
+             `mean (observed − estimated)²; noise alone ≈ ` +
+             `${watts(res.noise ** 2)} W²`, "gc-mse"),
+        stat("F1", f1(right, on.length).toFixed(2),
+             `2 × ${right} / (${on.length} named + ${N_ON})`),
         stat("TPR", pct(right / N_ON), `${right} of ${N_ON} found`),
-        stat("FPR", pct(wrong / N_OFF, 1), `${wrong} of ${N_OFF} wrong`),
-        stat("Left over", fitRes.error ? "—" : `±${watts(fitRes.rms)} W`,
-             `meter minus fit; noise is ±${watts(res.noise)} W`));
+        stat("FPR", pct(wrong / N_OFF, 1), `${wrong} of ${N_OFF} wrong`));
       host.appendChild(stats);
 
-      const bar = document.createElement("div");
-      bar.className = "gc-bar";
-      const seg = document.createElement("div");
-      seg.className = "seg";
-      seg.setAttribute("role", "radiogroup");
-      seg.setAttribute("aria-label", "What the stack shows");
-      for (const [v, label] of [[false, "Fitted watts"], [true, "True watts"]]) {
-        const b = document.createElement("button");
-        b.setAttribute("role", "radio");
-        b.setAttribute("aria-checked", truth === v);
-        b.textContent = label;
-        b.onclick = () => { truth = v; draw(); };
-        seg.appendChild(b);
-      }
-      bar.appendChild(seg);
-      const key = document.createElement("div");
-      key.className = "key";
-      key.innerHTML = truth
-        ? '<span><i class="sw gc-found"></i>found</span>' +
-          '<span><i class="sw gc-missed"></i>missed</span>' +
-          '<span><i class="sw gc-base"></i>always on</span>' +
-          '<span><i class="dot gc-y"></i>meter</span>'
-        : '<span><i class="sw gc-found"></i>on the circuit</span>' +
-          '<span><i class="sw gc-wrong"></i>not on it (wrong)</span>' +
-          '<span><i class="sw gc-base"></i>fitted always-on</span>' +
-          '<span><i class="dot gc-y"></i>meter</span>';
-      bar.appendChild(key);
-      host.appendChild(bar);
+      host.appendChild(chips(fitRes));
 
-      if (!truth && fitRes.error) {
+      const key = document.createElement("div");
+      key.className = "key gc-key";
+      key.innerHTML = '<span><i class="dot gc-y"></i>observed</span>' +
+        '<span><i class="sw gc-est"></i>estimated</span>' +
+        '<span><i class="ln gc-err"></i>error</span>';
+      host.appendChild(key);
+
+      if (fitRes.error) {
         const msg = document.createElement("p");
         msg.className = "msg error";
-        msg.textContent = fitRes.error + " Switch some off, or look at the true watts.";
+        msg.textContent = fitRes.error + " Remove some.";
         host.appendChild(msg);
       } else {
-        stack(host, res, x, on, fitRes, truth, focus,
-              j => { focus = focus === j ? null : j; draw(); });
+        bars(host, res, fitRes);
       }
 
-      devicesTable(host, fitRes);
-      const add = document.createElement("form");
-      add.className = "gc-add";
-      add.innerHTML = '<label class="field"><span>Add a device</span>' +
-        `<input type="number" min="0" max="${res.w.length - 1}" ` +
-        'placeholder="0 to 149" aria-label="Device number"></label>' +
-        '<button type="submit">Add and switch on</button>';
-      add.onsubmit = e => {
-        e.preventDefault();
-        const j = parseInt(add.querySelector("input").value);
-        if (!(j >= 0 && j < res.w.length)) return;
-        if (!listed.includes(j)) listed.push(j);
-        on.add(j);
-        focus = j;
-        draw();
-      };
-      host.appendChild(add);
       const note = document.createElement("p");
       note.className = "hint";
-      note.textContent = "Fitted watts: least squares of the meter on the " +
-        "devices switched on, plus an always-on load; ± is 2 standard " +
-        "errors. A device whose range reaches 0 is one the meter can't " +
-        "vouch for. Click a slice or a row to pick out one device.";
+      note.textContent = "Estimated: least squares of the meter on the " +
+        "devices listed, plus an always-on load. Each chip shows its " +
+        "device's fitted watts ± 2 standard errors.";
       host.appendChild(note);
     }
 
-    function devicesTable(host, fitRes) {
-      const wrap = document.createElement("div");
-      wrap.className = "table-wrap gc-devices";
-      const tbl = document.createElement("table");
-      tbl.className = "runs";
-      tbl.innerHTML = '<thead><tr><th>On</th><th>Device</th><th></th>' +
-        '<th class="num">True watts</th><th class="num">Fitted watts</th>' +
-        "</tr></thead><tbody></tbody>";
-      for (const j of listed) {
-        const st = status(res, on, j), [label, cls] = STATUS[st];
-        const tr = tbl.tBodies[0].insertRow();
-        tr.className = "pick" + (focus === j ? " selected" : "");
-        tr.onclick = e => {
-          if (e.target.closest("input")) return;
-          focus = focus === j ? null : j;
-          draw();
-        };
-        const box = document.createElement("input");
-        box.type = "checkbox";
-        box.checked = on.has(j);
-        box.setAttribute("aria-label", "Switch " + dev(j) + " on");
-        box.onchange = () => {
-          if (box.checked) on.add(j); else on.delete(j);
-          draw();
-        };
-        tr.insertCell().appendChild(box);
-        tr.insertCell().textContent = dev(j) + (yours.has(j) ? "" : " (added)");
-        if (yours.has(j) || res.w[j] > 0) tr.cells[1].textContent = dev(j);
-        tr.insertCell().appendChild(badge(label, cls));
-        const tw = tr.insertCell();
-        tw.className = "num";
-        tw.textContent = `${watts(res.w[j])} W`;
-        const fw = tr.insertCell();
-        fw.className = "num";
+    // a chip per device named, each with a − to remove it, and a + to add
+    function chips(fitRes) {
+      const box = document.createElement("div");
+      box.className = "chips gc-chips";
+      for (const j of on) {
+        const c = document.createElement("span");
+        const hit = res.w[j] > 0;
+        c.className = "chip gc-chip " + (hit ? "gc-chip-found" : "gc-chip-wrong");
+        c.title = hit ? `${dev(j)} is on the circuit: ${watts(res.w[j])} W true`
+                      : `${dev(j)} is not on the circuit`;
         const f = !fitRes.error && fitRes.w[j];
-        fw.textContent = f ? `${watts(f[0])} ± ${watts(2 * f[1])} W` : "—";
+        c.innerHTML = `<span>${dev(j)}</span>` +
+          `<span class="gc-chip-w">${f ? `${watts(f[0])} ± ${watts(2 * f[1])} W` : ""}</span>` +
+          `<span class="badge ${hit ? "ok" : "bad"}">${hit ? "found" : "wrong"}</span>`;
+        const minus = document.createElement("button");
+        minus.className = "gc-chip-x";
+        minus.textContent = "−";
+        minus.setAttribute("aria-label", "Remove " + dev(j));
+        minus.onclick = () => { on = on.filter(k => k !== j); draw(); };
+        c.appendChild(minus);
+        box.appendChild(c);
       }
-      wrap.appendChild(tbl);
-      host.appendChild(wrap);
+
+      if (!adding) {
+        const plus = document.createElement("button");
+        plus.className = "gc-plus";
+        plus.textContent = "+";
+        plus.title = "Add a device";
+        plus.setAttribute("aria-label", "Add a device");
+        plus.onclick = () => { adding = true; draw(); };
+        box.appendChild(plus);
+        return box;
+      }
+      // devices not listed: the circuit's missed ones (biggest first), then
+      // the rest by number
+      const sel = document.createElement("select");
+      sel.className = "gc-pick";
+      sel.setAttribute("aria-label", "Device to add");
+      sel.add(new Option("Add a device…", ""));
+      const rest = res.w.map((_, j) => j).filter(j => !on.includes(j));
+      const missed = rest.filter(j => res.w[j] > 0)
+        .sort((a, b) => res.w[b] - res.w[a]);
+      const groups = [["Missed (on the circuit)", missed,
+                       j => `${dev(j)} (${watts(res.w[j])} W true)`],
+                      ["Not on the circuit", rest.filter(j => !(res.w[j] > 0)),
+                       dev]];
+      for (const [label, ids, text] of groups) {
+        if (!ids.length) continue;
+        const g = document.createElement("optgroup");
+        g.label = label;
+        for (const j of ids) g.appendChild(new Option(text(j), j));
+        sel.appendChild(g);
+      }
+      sel.onchange = () => {
+        if (sel.value === "") return;
+        on.push(Number(sel.value));
+        adding = false;
+        draw();
+      };
+      const cancel = document.createElement("button");
+      cancel.className = "quiet";
+      cancel.textContent = "Cancel";
+      cancel.onclick = () => { adding = false; draw(); };
+      box.append(sel, cancel);
+      setTimeout(() => sel.focus());
+      return box;
     }
 
     draw();

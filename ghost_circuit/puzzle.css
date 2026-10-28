@@ -1,9 +1,9 @@
-/* Ghost on the Circuit: its post-mortem stack (shared/style.css has the rest). */
+/* Ghost on the Circuit: its post-mortem plot (shared/style.css has the rest). */
 .pm-tools { display: flex; align-items: center; gap: 14px; }
 
 .gc-head { display: flex; flex-wrap: wrap; align-items: center;
   justify-content: space-between; gap: 8px 16px; }
-.gc-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+.gc-stats { display: grid; grid-template-columns: 1.6fr repeat(3, minmax(0, 1fr));
   gap: 10px; margin: 10px 0 14px; }
 .gc-stat { display: grid; gap: 2px; padding: 10px 12px;
   border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
@@ -12,35 +12,34 @@
 .gc-stat-value { font-size: 1.45rem; font-weight: 600;
   font-variant-numeric: tabular-nums; }
 .gc-stat-sub { font-size: .8rem; color: var(--muted); }
-.gc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
-  margin-bottom: 6px; }
+.gc-mse { border: 2px solid var(--ink); }
+.gc-mse .gc-stat-value { font-size: 2rem; }
+
+.gc-chips { align-items: center; margin-bottom: 10px; }
+.gc-chip { display: inline-flex; align-items: center; gap: 8px; }
+.gc-chip .badge { margin: 0; }
+.gc-chip-w { color: var(--muted); font-variant-numeric: tabular-nums; }
+.gc-chip-wrong { border-color: #f3b4b4; }
+button.gc-chip-x, button.gc-plus { display: inline-grid; place-items: center;
+  width: 22px; height: 22px; padding: 0; border-radius: 50%;
+  font: 600 1rem/1 system-ui, sans-serif; }
+button.gc-chip-x { border: 0; background: transparent; color: var(--muted); }
+button.gc-chip-x:hover { background: #fee2e2; color: var(--bad); }
+button.gc-plus { width: 28px; height: 28px; font-size: 1.15rem; }
+.gc-pick { max-width: 260px; }
 
 .key .sw { display: inline-block; width: 16px; height: 10px; }
 .key .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
-.key .gc-found { background: var(--ok); }
-.key .gc-wrong { background: var(--bad); }
-.key .gc-missed { border: 1.4px solid var(--bad);
-  background: repeating-linear-gradient(135deg, var(--bad) 0 1.4px,
-    transparent 1.4px 4px); }
-.key .gc-base { background: #c9cfd8; }
-.key .gc-y { background: var(--ink); }
+.key .gc-est { background: var(--ok); opacity: .55; }
+.key .ln.gc-err { border-top: 2px solid var(--bad); }
+.key .gc-y { background: #000; }
+.gc-key { margin-bottom: 6px; }
 
-.gc-seg { cursor: pointer; stroke: var(--card); stroke-width: .6; }
-.gc-found { fill: var(--ok); }
-.gc-wrong { fill: var(--bad); }
-.gc-missed { stroke: var(--bad); stroke-width: 1; }
-.gc-hatch-line { stroke: var(--bad); stroke-width: 1.3; }
-.gc-neg { opacity: .55; }
-.gc-fade { opacity: .18; }
-.gc-base { fill: #c9cfd8; }
-.gc-y { fill: var(--ink); pointer-events: none; }
-
-.gc-devices { max-height: 340px; overflow-y: auto; margin-top: 12px;
-  border: 1px solid var(--line); border-radius: 8px; }
-.gc-devices input[type="checkbox"] { width: 16px; height: 16px; }
-.gc-add { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px;
-  margin: 10px 0 4px; }
-.gc-add .field { max-width: 220px; }
+.gc-est { fill: var(--ok); opacity: .55; }
+.gc-err { stroke: var(--bad); stroke-width: 1.6; }
+.gc-y { fill: #000; pointer-events: none; }
+.gc-hit { fill: transparent; }
+.gc-hit:hover { fill: rgba(28, 34, 48, .06); }
 
 @media (max-width: 700px) {
   .gc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
