@@ -47,8 +47,9 @@ Python, for testing.
 
 ## Leaderboard re-run
 
-`verify/verify.py` re-runs each waiting entry on 2000 quakes with a secret
-63-bit seed, in a Docker container (`verify/Dockerfile`: no network,
+`verify/verify.py` re-runs each waiting entry on 2000 quakes with a fresh
+53-bit seed, shown on the board once scored (the Practice tab with that
+seed and 2000 quakes replays it exactly), in a Docker container (`verify/Dockerfile`: no network,
 read-only disk, no secrets, 1 GB / 1 CPU, 15 minutes) that gets each
 quake's stations and arrivals only (`verify/child.py`); the truth stays
 outside. Board: project `where_start`, ranked when within 5 km in at least

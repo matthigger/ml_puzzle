@@ -2,8 +2,9 @@
 
 The page posts code, never a score. This script takes each where_start
 entry still waiting, runs its estimator on N_QUAKE quakes of the official
-setup with a seed drawn here (and never shown), and writes back the score
-the board displays. The database is shared by every puzzle (see
+setup with a seed drawn here, and writes back the score the board displays,
+seed included: the Practice tab (or where_start.evaluate) with that seed
+and N_QUAKE quakes replays the re-run exactly. The database is shared by every puzzle (see
 ../supabase/schema.sql); a puzzle's re-run script handles its own
 PROJECT and scores it its own way (score()).
 
@@ -45,6 +46,10 @@ PROJECT = 'where_start'
 IMAGE = 'where-start-verify'
 N_QUAKE = 2000
 
+# the secret seed: too many bits to search for from what the code sees, and
+# few enough for a JavaScript number, so the Practice tab can replay it
+SEED_BITS = 53
+
 # wall-clock limit for one entry's whole re-run
 TIMEOUT_SEC = 15 * 60
 
@@ -80,8 +85,7 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         helpers (dict): {filename: source} of helper .py files
         estimator (str): name of the estimator in that code
         n_quake (int): quakes to run
-        seed (int | None): None draws a secret one, 63 bits, too many to
-            search for from the arrivals
+        seed (int | None): None draws a secret one (see SEED_BITS)
 
     Returns:
         result (dict): {hit_rate, mean_km, median_km, p90_km,
@@ -91,7 +95,7 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         Failed: the code didn't load, raised, returned junk or timed out
     """
     if seed is None:
-        seed = secrets.randbits(63)
+        seed = secrets.randbits(SEED_BITS)
     start = time.monotonic()
     name = 'verify-' + secrets.token_hex(8)
     proc = subprocess.Popen(DOCKER + ['--name', name, image],
@@ -181,7 +185,7 @@ def score(res):
     """
     metrics = {k: res[k] for k in ('hit_rate', 'mean_km', 'median_km',
                                    'p90_km', 'mean_abs_t0_error',
-                                   'n_quake')}
+                                   'n_quake', 'seed')}
     return metrics, res['hit_rate'] >= HIT_BAR, res['mean_km']
 
 

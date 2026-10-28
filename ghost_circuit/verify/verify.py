@@ -2,8 +2,9 @@
 
 The page posts code, never a score. This script takes each ghost_circuit
 entry still waiting, runs its estimator on N_CIRCUIT circuits of the
-official setup with a seed drawn here (and never shown), and writes back the
-score the board displays. The database is shared by every puzzle (see
+official setup with a seed drawn here, and writes back the score the board
+displays, seed included: the Practice tab (or ghost_circuit.evaluate) with
+that seed and N_CIRCUIT circuits replays the re-run exactly. The database is shared by every puzzle (see
 ../supabase/schema.sql); a puzzle's re-run script handles its own
 PROJECT and scores it its own way (score()).
 
@@ -37,11 +38,14 @@ import urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'py'))
 
 import runner
-from ghost_circuit import OFFICIAL, GhostCircuit
 
 PROJECT = 'ghost_circuit'
 IMAGE = 'ghost-circuit-verify'
 N_CIRCUIT = 2000
+
+# the secret seed: too many bits to search for from what the code sees, and
+# few enough for a JavaScript number, so the Practice tab can replay it
+SEED_BITS = 53
 
 # wall-clock limit for one entry's whole re-run
 TIMEOUT_SEC = 30 * 60
@@ -83,8 +87,7 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
         main (str): the student's code
         helpers (dict): {filename: source} of helper .py files
         estimator (str): name of the estimator in that code
-        seed (int | None): None draws a secret one, 63 bits, too many to
-            search for from the meter data
+        seed (int | None): None draws a secret one (see SEED_BITS)
 
     Returns:
         result (dict): runner.summarize()'s fields, n_circuit, seed,
@@ -95,7 +98,7 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
             timed out
     """
     if seed is None:
-        seed = secrets.randbits(63)
+        seed = secrets.randbits(SEED_BITS)
     start = time.monotonic()
     name = 'verify-' + secrets.token_hex(8)
     proc = subprocess.Popen(DOCKER + ['--name', name, image],
@@ -142,8 +145,8 @@ def rerun(main, helpers, estimator, n_circuit=N_CIRCUIT, seed=None,
         if msg.get('ok') is not True:
             raise Failed(error(msg, 'the code did not load'))
         for idx in range(n_circuit):
-            # every bit of the secret seeds each circuit
-            circuit = GhostCircuit.sample(**OFFICIAL, seed=[seed, idx])
+            # the Practice tab's circuit idx, so the seed replays there
+            circuit = runner.sample(seed, idx)
             send(dict(x=[''.join(map(str, row)) for row in circuit.x],
                       y=circuit.y.tolist()))
             msg = recv()
@@ -182,7 +185,7 @@ def score(res):
     """ Return the board's view of a re-run: (metrics, qualifies, rank),
     rank lower is better among entries that qualify. """
     metrics = {k: res[k] for k in ('f1', 'tpr', 'fpr', 'mean_wrong',
-                                   'n_circuit')}
+                                   'n_circuit', 'seed')}
     return metrics, True, -res['f1']
 
 

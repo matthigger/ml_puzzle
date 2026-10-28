@@ -62,8 +62,9 @@ imports outside the browser too.
 
 ## Leaderboard re-run
 
-`verify/verify.py` re-runs each waiting entry on 2000 circuits with a secret
-63-bit seed, in a Docker container (`verify/Dockerfile`: no network,
+`verify/verify.py` re-runs each waiting entry on 2000 circuits with a fresh
+53-bit seed, shown on the board once scored (the Practice tab with that
+seed and 2000 circuits replays it exactly), in a Docker container (`verify/Dockerfile`: no network,
 read-only disk, 1 GB / 1 CPU, 30 minutes). The container gets each
 circuit's `x` and `y` only (`verify/child.py`), never which devices are on
 it, and every reply is untrusted (bounded line, at most 150 device
