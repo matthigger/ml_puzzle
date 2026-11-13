@@ -4,7 +4,7 @@
 // Messages in:  { id, cmd, args }, cmd one of load / run / replay /
 //               notebook / unzip
 // Messages out: { id, result } (a JSON string from py/runner.py, or text),
-//               { id, error }, { id, progress: [done, n, hits, total_km] },
+//               { id, error }, { id, progress: [done, n, total_mse, n_bad] },
 //               { ready: true } once Python is up, { fatal } if it failed.
 
 // a module worker (see shared/py.js): pyodide.mjs is the supported way in
@@ -22,7 +22,7 @@ async function init() {
   py = await loadPyodide({ indexURL: PYODIDE });
   // the quakes are numpy arrays
   await py.loadPackage("numpy");
-  for (const f of ["where_start.py", "runner.py"]) {
+  for (const f of ["earthquake.py", "runner.py"]) {
     const resp = await fetch(new URL("../py/" + f + version, self.location));
     if (!resp.ok) throw new Error(`could not fetch ${f}: ${resp.status}`);
     py.FS.writeFile("/home/pyodide/" + f, await resp.text());
@@ -54,8 +54,8 @@ async function handle({ id, cmd, args }) {
       await py.loadPackagesFromImports(all);
       result = runner.load(args.source, JSON.stringify(args.helpers));
     } else if (cmd === "run") {
-      const progress = (done, n, hits, km) =>
-        postMessage({ id, progress: [done, n, hits, km] });
+      const progress = (done, n, mse, bad) =>
+        postMessage({ id, progress: [done, n, mse, bad] });
       result = runner.run(args.name, JSON.stringify(args.setup), progress,
                           args.every || 100);
     } else if (cmd === "replay") {

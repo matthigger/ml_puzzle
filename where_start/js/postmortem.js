@@ -5,22 +5,23 @@
 //   PostMortem.mark(rows, idx)             highlight quake idx's row
 //   PostMortem.plot(host, result, idx, circles)  result: runner.replay()'s
 //                                          output; circles: draw each
-//                                          station's arrival circle
+//                                          station's delay circle
 //
-// The plot has a map of the region (stations, the epicenter, your
-// estimate), a close-up around the epicenter, and each station's residual
-// at your estimate. Pressing or dragging on the map or close-up moves the
-// estimate there, with t0-hat refit to it, and redraws the residuals.
+// The plot has a map (stations, the epicenter, your estimate), a close-up
+// around the epicenter, and each station's residual at your estimate.
+// Pressing or dragging on the map or close-up moves the estimate there and
+// redraws the residuals.
 //
-// Notation, the same in the table, the plot and their hover text: p is the
-// epicenter and t0 the origin time (hidden), p-hat and t0-hat your
-// estimate; station i at s_i recorded t_i; v = 6 km/s; r_i = t0-hat +
-// ||p-hat - s_i|| / v - t_i is its residual at your estimate; sigma the
-// timing noise (hidden).
+// Notation, the notebook's, the same in the table, the plot and their hover
+// text: y is the epicenter (hidden), y-hat your estimate; station i at x_i
+// felt the quake t_i seconds after it started; v the wave speed; r_i =
+// ||y-hat - x_i|| / v - t_i is its residual at your estimate. MSE is
+// quake.evaluate(y-hat) = ||y-hat - y||^2 / 2, km^2.
 
 const PostMortem = (function () {
   const NS = "http://www.w3.org/2000/svg";
-  const V = 6;
+  // a miss this far off (km) has gone badly wrong (py/runner.py, BAD_KM)
+  const BAD_KM = 10;
 
   function el(tag, attrs, parent) {
     const e = document.createElementNS(NS, tag);
@@ -31,8 +32,7 @@ const PostMortem = (function () {
 
   // the notation, as HTML. Wrapped in <i> so headings' uppercase styling
   // leaves it alone
-  const ERR = "<i>‖p̂ − p‖</i>";
-  const DT = "<i>t̂<sub>0</sub> − t<sub>0</sub></i>";
+  const ERR = "<i>‖ŷ − y‖</i>";
   const RMAX = "<i>max |r<sub>i</sub>|</i>";
   const fmt = (v, k = 2) => (v <= -0.5 * 10 ** -k ? "−" : "") + Math.abs(v).toFixed(k);
   const SUB = "₀₁₂₃₄₅₆₇₈₉";
@@ -73,24 +73,24 @@ const PostMortem = (function () {
   // columns: heading, sort key, cell text (or node), hover help
   const COLUMNS = [
     { label: "Quake", num: true, key: q => q.idx, text: q => q.idx },
-    { label: "Result", key: q => q.hit ? 1 : 0,
-      node: q => badge(q.hit ? "hit" : "miss", q.hit ? "ok" : "bad"),
-      help: "Hit: your estimate is within 5 km of the epicenter." },
-    { label: "Error", html: ERR + ' <span class="unit">(km)</span>', num: true, key: q => q.error_km,
-      text: q => fmt(q.error_km),
-      help: `${ERR}: how far your estimate <i>p̂</i> is from the ` +
-            "epicenter <i>p</i> (hidden)." },
-    { label: "Start", html: DT + ' <span class="unit">(s)</span>', num: true, key: q => q.t0_error,
-      text: q => fmt(q.t0_error),
-      help: `${DT}: your origin time minus the true one. Positive: ` +
-            "you think it started later." },
-    { label: "Noise", html: '<i>σ</i> <span class="unit">(s)</span>', num: true, key: q => q.noise_sd,
-      text: q => q.noise_sd.toFixed(2),
-      help: "<i>σ</i>: timing noise at every station (hidden)." },
+    { label: "Miss", html: ERR + ' <span class="unit">(km)</span>', num: true,
+      key: q => q.miss_km,
+      node: q => {
+        const span = document.createElement("span");
+        span.textContent = fmt(q.miss_km);
+        if (q.bad) span.className = "bad-num";
+        return span;
+      },
+      help: `${ERR}: how far your estimate <i>ŷ</i> is from the ` +
+            `epicenter <i>y</i> (hidden); red past ${BAD_KM} km.` },
+    { label: "MSE", html: 'MSE <span class="unit">(km²)</span>', num: true,
+      key: q => q.mse, text: q => fmt(q.mse),
+      help: "quake.evaluate(<i>ŷ</i>) = <i>‖ŷ − y‖</i>² / 2: what the " +
+            "leaderboard averages." },
     { label: "Worst fit", html: RMAX + ' <span class="unit">(s)</span>', num: true,
       key: q => q.max_resid, text: q => q.max_resid.toFixed(2),
       help: `${RMAX}: the station your estimate fits worst. ` +
-            "<i>r<sub>i</sub></i> = predicted minus recorded arrival." },
+            "<i>r<sub>i</sub></i> = predicted minus recorded delay." },
   ];
 
   // opts: {sort: {col, dir}, onSort(col), onPick(idx)}
@@ -154,8 +154,8 @@ const PostMortem = (function () {
   }
 
   // -------------------------------------------------------------- plot
-  const W = 920, H = 430, SIZE = 200;
-  const MAP = { x: 46, y: 22, w: 370 };                  // the region
+  const W = 920, H = 430;
+  const MAP = { x: 46, y: 22, w: 370 };                  // every station
   const ZOOM = { x: 470, y: 22, w: 190 };                // close-up
   const RES = { x: 700, y: 22, w: 205, rowH: 0 };        // residual bars
 
@@ -197,14 +197,15 @@ const PostMortem = (function () {
     return { g, px, py, s, km };
   }
 
-  // r_i = t0-hat + ||p-hat - s_i|| / v - t_i at est = (x, y, t0)
-  const residuals = (res, [x, y, t0]) => res.stations.map(([sx, sy], i) =>
-    t0 + Math.hypot(x - sx, y - sy) / V - res.arrivals[i]);
+  // r_i = ||y-hat - x_i|| / v - t_i at est = y-hat
+  const residuals = (res, [ex, ey]) => res.x.map(([sx, sy], i) =>
+    Math.hypot(ex - sx, ey - sy) / res.speed - res.t[i]);
 
-  // the t0-hat that best fits p-hat = (x, y): least squares in t0-hat is
-  // the mean of t_i - ||p-hat - s_i|| / v
-  const fitT0 = (res, x, y) => res.stations.reduce((sum, [sx, sy], i) =>
-    sum + res.arrivals[i] - Math.hypot(x - sx, y - sy) / V, 0) / res.arrivals.length;
+  // a tick step giving at most 5 ticks over span
+  const tickStep = span => {
+    const p = 10 ** Math.floor(Math.log10(span / 5));
+    return [1, 2, 5, 10].map(m => m * p).find(v => span / v <= 5);
+  };
 
   function ticks(svg, box, x0, y0, span, step) {
     const s = box.w / span;
@@ -226,8 +227,13 @@ const PostMortem = (function () {
   // res.dragged (a dragged estimate) outlives a redraw, e.g. a toggle flip
   function plot(host, res, idx, circles) {
     host.replaceChildren();
-    const n = res.arrivals.length;
-    const [px0, py0] = res.p;
+    const n = res.t.length;
+    const [px0, py0] = res.y;
+    // the map: a square around the stations and the epicenter, with room
+    const xs = [...res.x.map(p => p[0]), px0], ys = [...res.x.map(p => p[1]), py0];
+    const lo = [Math.min(...xs), Math.min(...ys)], hi = [Math.max(...xs), Math.max(...ys)];
+    const mapSpan = 1.15 * Math.max(hi[0] - lo[0], hi[1] - lo[1], 1);
+    const mx0 = (lo[0] + hi[0] - mapSpan) / 2, my0 = (lo[1] + hi[1] - mapSpan) / 2;
     // during a drag the residual scale (lim) only widens, and the close-up's
     // frame (zoom) holds if the drag began in it, so the estimate stays
     // under the pointer
@@ -251,24 +257,23 @@ const PostMortem = (function () {
 
     const note = document.createElement("p");
     note.className = "hint";
-    note.textContent = "Press or drag on the map or close-up to move p̂: " +
-      "t̂₀ refits to it (the mean of tᵢ − ‖p̂ − sᵢ‖ / v) and the residuals " +
-      "follow. Arrival circle: radius v(tᵢ − t₀) around station i, using " +
-      "the true start; the circles meet near p. Residual " +
-      "rᵢ = t̂₀ + ‖p̂ − sᵢ‖ / v − tᵢ at the estimate.";
+    note.textContent = "Press or drag on the map or close-up to move ŷ: " +
+      "the residuals follow. Delay circle: radius v·tᵢ around station i, " +
+      "where its recording puts the quake; the circles meet near y. " +
+      "Residual rᵢ = ‖ŷ − xᵢ‖ / v − tᵢ at the estimate.";
     host.appendChild(note);
 
     function draw() {
       const est = res.dragged || res.est, moved = !!res.dragged;
-      const [ex, ey, et0] = est;
-      const err = Math.hypot(ex - px0, ey - py0), hit = err <= 5;
+      const [ex, ey] = est;
+      const err = Math.hypot(ex - px0, ey - py0), ok = err <= BAD_KM;
       const resid = moved ? residuals(res, est) : res.resid;
 
-      head.replaceChildren(badge(hit ? "hit" : "miss", hit ? "ok" : "bad"));
-      const dt = et0 - res.t0;
-      head.append(` Quake ${idx}: ${moved ? "the dragged" : "your"} ` +
-        `estimate is ${err.toFixed(2)} km from the epicenter, its start ` +
-        `time ${Math.abs(dt).toFixed(2)} s ${dt >= 0 ? "late" : "early"}.`);
+      head.replaceChildren();
+      if (!ok) head.append(badge(`off by ${BAD_KM}+ km`, "bad"), " ");
+      head.append(`Quake ${idx}: ${moved ? "the dragged" : "your"} ` +
+        `estimate is ${err.toFixed(2)} km from the epicenter ` +
+        `(MSE ${(err * err / 2).toFixed(2)} km²).`);
       if (moved) {
         const back = document.createElement("button");
         back.className = "quiet";
@@ -279,27 +284,25 @@ const PostMortem = (function () {
 
       svg.replaceChildren();
       // ---- the map
-      const m = panel(svg, MAP, 0, 0, SIZE, "q-clip-map");
-      ticks(svg, MAP, 0, 0, SIZE, 50);
+      const m = panel(svg, MAP, mx0, my0, mapSpan, "q-clip-map");
+      ticks(svg, MAP, mx0, my0, mapSpan, tickStep(mapSpan));
       el("text", { x: MAP.x, y: MAP.y - 8, class: "q-title" }, svg).textContent =
         "Map (km)";
-      if (circles) {
-        // where each station's recording puts the quake, given the true start
-        res.arrivals.forEach((t, i) => {
-          const r = V * (t - res.t0);
-          if (r <= 0) return;
-          el("circle", { cx: m.px(res.stations[i][0]), cy: m.py(res.stations[i][1]),
-                         r: r * m.s, class: "q-circle" }, m.g);
-        });
-      }
+      // where each station's recording puts the quake
+      const delayCircles = p => res.t.forEach((t, i) => {
+        if (t <= 0) return;
+        el("circle", { cx: p.px(res.x[i][0]), cy: p.py(res.x[i][1]),
+                       r: res.speed * t * p.s, class: "q-circle" }, p.g);
+      });
+      if (circles) delayCircles(m);
       el("line", { x1: m.px(px0), y1: m.py(py0), x2: m.px(ex), y2: m.py(ey),
                    class: "q-err" }, m.g);
-      // stations lie inside the region: unclipped, so edge labels show
-      res.stations.forEach(([x, y], i) => station(svg, m.px(x), m.py(y), name(i)));
+      // stations lie inside the map: unclipped, so edge labels show
+      res.x.forEach(([x, y], i) => station(svg, m.px(x), m.py(y), name(i)));
       // on top of the stations; the estimate may fall off the map: clipped
       star(svg, m.px(px0), m.py(py0), 9);
       cross(el("g", { "clip-path": "url(#q-clip-map)" }, svg),
-            m.px(ex), m.py(ey), 6, hit);
+            m.px(ex), m.py(ey), 6, ok);
 
       // ---- the close-up: the epicenter and the estimate, with room around;
       // still while a drag that began in it is on
@@ -309,34 +312,24 @@ const PostMortem = (function () {
       const { half, cx, cy } = zoom;
       const span = 2 * half, zx0 = cx - half, zy0 = cy - half;
       const z = panel(svg, ZOOM, zx0, zy0, span, "q-clip-zoom");
-      const step = [1, 2, 5, 10, 20, 50, 100].find(v => span / v <= 5);
-      ticks(svg, ZOOM, zx0, zy0, span, step);
+      ticks(svg, ZOOM, zx0, zy0, span, tickStep(span));
       el("text", { x: ZOOM.x, y: ZOOM.y - 8, class: "q-title" }, svg).textContent =
         "Close-up (km)";
-      // the 5 km hit radius
-      el("circle", { cx: z.px(px0), cy: z.py(py0), r: 5 * z.s, class: "q-hit" }, z.g);
-      if (circles) {
-        res.arrivals.forEach((t, i) => {
-          const r = V * (t - res.t0);
-          if (r <= 0) return;
-          el("circle", { cx: z.px(res.stations[i][0]), cy: z.py(res.stations[i][1]),
-                         r: r * z.s, class: "q-circle" }, z.g);
-        });
-      }
+      if (circles) delayCircles(z);
       el("line", { x1: z.px(px0), y1: z.py(py0), x2: z.px(ex), y2: z.py(ey),
                    class: "q-err" }, z.g);
-      res.stations.forEach(([x, y], i) => {
+      res.x.forEach(([x, y], i) => {
         if (Math.abs(x - cx) <= half && Math.abs(y - cy) <= half) {
           station(z.g, z.px(x), z.py(y), name(i));
         }
       });
       star(z.g, z.px(px0), z.py(py0), 10);
-      cross(z.g, z.px(ex), z.py(ey), 7, hit);
+      cross(z.g, z.px(ex), z.py(ey), 7, ok);
       const facts = [
-        `p = (${px0.toFixed(1)}, ${py0.toFixed(1)}), t₀ = ${res.t0.toFixed(2)} s`,
-        `p̂ = (${ex.toFixed(1)}, ${ey.toFixed(1)}), t̂₀ = ${et0.toFixed(2)} s`,
-        `‖p̂ − p‖ = ${err.toFixed(2)} km`,
-        `σ = ${res.noise_sd.toFixed(2)} s`,
+        `y = (${px0.toFixed(1)}, ${py0.toFixed(1)})`,
+        `ŷ = (${ex.toFixed(1)}, ${ey.toFixed(1)})`,
+        `‖ŷ − y‖ = ${err.toFixed(2)} km`,
+        `v = ${res.speed} km/s, noise sd ${res.noise_sd} s`,
       ];
       facts.forEach((t, k) => {
         el("text", { x: ZOOM.x, y: ZOOM.y + ZOOM.w + 42 + 19 * k,
@@ -379,12 +372,11 @@ const PostMortem = (function () {
         'class="q-station" points="7,1 1,12 13,12"/></svg>station</span>' +
         '<span><svg width="16" height="16" viewBox="0 0 16 16"><polygon ' +
         'class="q-true" points="8,0 10,6 16,6 11,10 13,16 8,12 3,16 5,10 0,6 ' +
-        '6,6"/></svg>epicenter <i>p</i></span>' +
+        '6,6"/></svg>epicenter <i>y</i></span>' +
         '<span><svg width="14" height="14" viewBox="0 0 14 14"><path ' +
-        `class="q-est ${hit ? "ok" : "bad"}" d="M2,2 L12,12 M2,12 L12,2"/></svg>` +
-        `${moved ? "dragged" : "your"} estimate <i>p̂</i></span>` +
-        (circles ? '<span><i class="ln q-circ"></i>arrival circle</span>' : "") +
-        '<span><i class="ln q-hitln"></i>5 km</span>';
+        `class="q-est ${ok ? "ok" : "bad"}" d="M2,2 L12,12 M2,12 L12,2"/></svg>` +
+        `${moved ? "dragged" : "your"} estimate <i>ŷ</i></span>` +
+        (circles ? '<span><i class="ln q-circ"></i>delay circle</span>' : "");
     }
 
     // moves the estimate to the pointer, in the panel the drag began in;
@@ -393,7 +385,7 @@ const PostMortem = (function () {
       const pt = new DOMPoint(e.clientX, e.clientY)
         .matrixTransform(svg.getScreenCTM().inverse());
       const [x, y] = panels[drag].km(pt.x, pt.y);
-      res.dragged = [x, y, fitT0(res, x, y)];
+      res.dragged = [x, y];
       if (!frame) frame = requestAnimationFrame(() => { frame = 0; draw(); });
     }
     svg.addEventListener("pointerdown", e => {

@@ -4,40 +4,34 @@
 
 (function () {
   const $ = id => document.getElementById(id);
-  const pct = v => (100 * v).toFixed(1) + "%";
-  const BASELINES = ["first to hear it", "first three"];
-  const OFFICIAL = { n_station: 12 };
-  // a hit: within HIT_KM of the epicenter; the bar: hits in HIT_BAR of
-  // quakes (py/where_start.py)
-  const HIT_KM = 5, HIT_BAR = 0.9;
+  const BASELINES = ["first station", "stations' average"];
+  // the graded setup: Earthquake's defaults (py/runner.py, OFFICIAL)
+  const OFFICIAL = { n: 10, spacing: 50, noise_sd: 0.2 };
+  // a miss this far off (km) has gone badly wrong (py/runner.py, BAD_KM)
+  const BAD_KM = 10;
   const EXAMPLE = `import numpy as np
-from where_start import evaluate
 
 
-def estimate(stations, arrivals):
-    """ the station that heard it first, at the moment it heard it """
-    i = np.argmin(arrivals)
-    return stations[i, 0], stations[i, 1], arrivals[i]
+def estimate(x, t, speed):
+    """ the stations' average position """
+    return x.mean(axis=0)
 `;
 
   // the baselines' code (py/runner.py), shown like a run's own
   const BASELINE_CODE = {
-    "first to hear it": `import numpy as np
+    "first station": `import numpy as np
 
 
-def estimate(stations, arrivals):
-    """ the station that heard it first, at the moment it heard it """
-    i = np.argmin(arrivals)
-    return stations[i, 0], stations[i, 1], arrivals[i]
+def estimate(x, t, speed):
+    """ the station that felt the quake first """
+    return x[np.argmin(t)]
 `,
-    "first three": `import numpy as np
+    "stations' average": `import numpy as np
 
 
-def estimate(stations, arrivals):
-    """ the middle of the three stations that heard it first """
-    idx = np.argsort(arrivals)[:3]
-    x, y = stations[idx].mean(axis=0)
-    return x, y, arrivals[idx[0]]
+def estimate(x, t, speed):
+    """ the stations' average position """
+    return x.mean(axis=0)
 `,
   };
   const baselineCode = name => ({ main: BASELINE_CODE[name], helpers: {} });
@@ -67,9 +61,10 @@ def estimate(stations, arrivals):
   let mainFile = store.get("mainFile", null);
   let shownUpload = null;                   // the file shown in files mode
   // run records: {id, name, estimator, baseline, code: {main, helpers,
-  // mainName?} | null, n_station, n_quake, seed, hit_rate, hit_se,
-  // mean_km, median_km, p90_km, seconds, when}
-  let runs = store.get("runs", []);
+  // mainName?} | null, n, spacing, noise_sd, n_quake, seed, mean_mse,
+  // mse_se, median_km, p90_km, n_bad, seconds, when}. A saved run without
+  // mean_mse scored a different puzzle, so it is dropped.
+  let runs = store.get("runs", []).filter(r => r.mean_mse !== undefined);
   let selectedId = store.get("selected", null);
   let sort = store.get("sort", { col: "When", dir: -1 });
   let pmSort = store.get("pmSort", { col: "Quake", dir: 1 });
@@ -202,8 +197,8 @@ def estimate(stations, arrivals):
       loadMsg(res.error, "error");
     } else if (!res.names.length) {
       codeStatus("failed", "No estimator");
-      loadMsg("No function that takes (stations, arrivals) was found: " +
-              "define estimate(stations, arrivals).", "error");
+      loadMsg("No function that takes (x, t, speed) or (x, t) was " +
+              "found: define estimate(x, t, speed).", "error");
     } else {
       const k = res.names.length;
       codeStatus("ready", `Loaded: ${k} estimator${k > 1 ? "s" : ""}`);
@@ -235,20 +230,43 @@ def estimate(stations, arrivals):
   }
 
   // --------------------------------------------------------------- setup
-  function formSetup() {
-    return { ...OFFICIAL,
-      n_quake: Math.min(20000, Math.max(1, parseInt($("n-quake").value) || 1)),
-      seed: Math.max(0, parseInt($("seed").value) || 0) };
+  // a number from a form field, clamped to [lo, hi]; fallback if blank
+  function num(id, lo, hi, fallback, int = false) {
+    const v = (int ? parseInt : parseFloat)($(id).value);
+    return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
   }
 
+  function formSetup() {
+    return {
+      n: num("n-station", 1, 200, OFFICIAL.n, true),
+      spacing: num("spacing", 0.1, 10000, OFFICIAL.spacing),
+      noise_sd: num("noise-sd", 0, 100, OFFICIAL.noise_sd),
+      n_quake: num("n-quake", 1, 20000, 1, true),
+      seed: num("seed", 0, Number.MAX_SAFE_INTEGER, 0, true) };
+  }
+
+  const FORM = { n_quake: "n-quake", seed: "seed", n: "n-station",
+                 spacing: "spacing", noise_sd: "noise-sd" };
+
   function saveForm() {
-    store.set("form", { n_quake: $("n-quake").value, seed: $("seed").value });
+    const f = {};
+    for (const [k, id] of Object.entries(FORM)) f[k] = $(id).value;
+    store.set("form", f);
   }
 
   function restoreForm() {
-    const f = store.get("form", null);
-    if (f) { $("n-quake").value = f.n_quake; $("seed").value = f.seed; }
+    const f = store.get("form", {});
+    for (const [k, id] of Object.entries(FORM)) {
+      if (f[k] !== undefined) $(id).value = f[k];
+    }
   }
+
+  // the settings a run used, and whether they are the graded ones
+  const isOfficial = r => Object.keys(OFFICIAL).every(k => r[k] === OFFICIAL[k]);
+  const setupText = r => isOfficial(r) ? "default"
+    : `${r.n} · ${r.spacing} km · ${r.noise_sd} s`;
+  const sameQuakes = (a, b) => a.n_quake === b.n_quake && a.seed === b.seed &&
+    Object.keys(OFFICIAL).every(k => a[k] === b[k]);
 
   // ---------------------------------------------------------------- runs
   // runs name on setup; returns the run's record (also kept in runs), or
@@ -270,29 +288,27 @@ def estimate(stations, arrivals):
     }
     const rec = {
       id: Date.now() + Math.random(), name: label, estimator: name, baseline,
-      code, n_station: setup.n_station,
+      code, n: setup.n, spacing: setup.spacing, noise_sd: setup.noise_sd,
       n_quake: setup.n_quake, seed: setup.seed,
-      hit_rate: res.hit_rate, hit_se: res.hit_se, mean_km: res.mean_km,
-      median_km: res.median_km, p90_km: res.p90_km,
+      mean_mse: res.mean_mse, mse_se: res.mse_se,
+      median_km: res.median_km, p90_km: res.p90_km, n_bad: res.n_bad,
       seconds: (performance.now() - t0) / 1000, when: Date.now(),
     };
     saveDetail(rec.id, detailOf(res));
     // a baseline replaces its older copy on the same quakes
-    for (const r of runs) {
-      if (baseline && r.baseline && r.name === name &&
-          r.n_quake === rec.n_quake && r.seed === rec.seed) removeDetail(r.id);
-    }
-    runs = runs.filter(r => !(baseline && r.baseline && r.name === name &&
-      r.n_quake === rec.n_quake && r.seed === rec.seed));
+    const old = r => baseline && r.baseline && r.name === name &&
+      sameQuakes(r, rec);
+    for (const r of runs) if (old(r)) removeDetail(r.id);
+    runs = runs.filter(r => !old(r));
     runs.unshift(rec);
     store.set("runs", runs);
     return rec;
   }
 
-  function progressBar(done, n, hits, km) {
+  function progressBar(done, n, mse, bad) {
     $("bar").style.width = (100 * done / n) + "%";
-    runMsg(`${done} of ${n} quakes: ${pct(hits / done)} within ${HIT_KM} km, ` +
-           `${(km / done).toFixed(2)} km off on average`);
+    runMsg(`${done} of ${n} quakes: mean MSE ${(mse / done).toFixed(2)} km², ` +
+           `${bad} off by ${BAD_KM}+ km`);
   }
 
   async function runClicked() {
@@ -318,12 +334,9 @@ def estimate(stations, arrivals):
     }
     $("bar").style.width = "100%";
     $("run-name").value = "";
-    const [v] = verdict(rec);
-    runMsg(`Done in ${rec.seconds.toFixed(1)} s: ${pct(rec.hit_rate)} within ` +
-           `${HIT_KM} km, ${rec.mean_km.toFixed(2)} km off on average` +
-           { yes: " (clears 90%).", no: " (below 90%).",
-             maybe: " (too close to 90% to call)." }[v],
-           v === "yes" ? "ok" : "");
+    runMsg(`Done in ${rec.seconds.toFixed(1)} s: mean MSE ` +
+           `${rec.mean_mse.toFixed(2)} km², ${rec.n_bad} of ${rec.n_quake} ` +
+           `quakes off by ${BAD_KM}+ km.`);
     select(rec, false);
   }
 
@@ -343,13 +356,6 @@ def estimate(stations, arrivals):
     renderRuns();
   }
 
-  function verdict(r) {
-    const lo = r.hit_rate - 2 * r.hit_se, hi = r.hit_rate + 2 * r.hit_se;
-    if (lo >= HIT_BAR) return ["yes", "ok"];
-    if (hi < HIT_BAR) return ["no", "bad"];
-    return ["maybe", "warn"];
-  }
-
   function stamp(t) {
     const d = new Date(t);
     const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -362,14 +368,13 @@ def estimate(stations, arrivals):
   // sorts high to low
   const COLUMNS = [
     { label: "Run", key: r => r.name.toLowerCase() },
+    { label: "Setup", key: r => setupText(r) },
     { label: "Quakes", num: true, key: r => r.n_quake },
     { label: "Seed", num: true, key: r => r.seed },
-    { label: "Within 5 km", num: true, key: r => r.hit_rate, desc: true },
-    { label: "Avg km", num: true, key: r => r.mean_km },
-    { label: "Median", num: true, key: r => r.median_km },
-    { label: "90th pct", num: true, key: r => r.p90_km },
-    { label: "90%?", key: r => ({ yes: 2, maybe: 1, no: 0 })[verdict(r)[0]],
-      desc: true },
+    { label: "MSE (km²)", num: true, key: r => r.mean_mse },
+    { label: "Median km", num: true, key: r => r.median_km },
+    { label: "90th pct km", num: true, key: r => r.p90_km },
+    { label: `${BAD_KM}+ km`, num: true, key: r => r.n_bad },
     { label: "Time", num: true, key: r => r.seconds },
     { label: "When", key: r => r.when, desc: true },
     { label: "" },
@@ -430,15 +435,14 @@ def estimate(stations, arrivals):
       };
       if (r.baseline) add(r.name);
       else tr.insertCell().appendChild(nameInput(r));
+      add(setupText(r), isOfficial(r) ? "muted" : "").title =
+        `${r.n} stations, ${r.spacing} km spacing, ${r.noise_sd} s noise`;
       add(r.n_quake, "num");
       add(r.seed, "num");
-      add(`${pct(r.hit_rate)} ± ${(200 * r.hit_se).toFixed(1)}`, "num");
-      add(r.mean_km.toFixed(2), "num");
+      add(`${r.mean_mse.toFixed(2)} ± ${(2 * r.mse_se).toFixed(2)}`, "num");
       add(r.median_km.toFixed(2), "num");
       add(r.p90_km.toFixed(2), "num");
-      const [v, cls] = verdict(r);
-      add(v).appendChild(Object.assign(document.createElement("i"),
-        { className: "status-dot " + cls }));
+      add(r.n_bad, "num");
       add(r.seconds.toFixed(1) + " s", "num");
       add(stamp(r.when), "muted").title = new Date(r.when).toLocaleString();
 
@@ -495,8 +499,8 @@ def estimate(stations, arrivals):
   // per key of QUAKE_KEYS (py/runner.py, run), one entry per quake. Kept in
   // memory and, space allowing, in localStorage; when missing, rebuilt by
   // re-running the run.
-  const QUAKE_KEYS = ["x", "y", "t0", "x_hat", "y_hat", "t0_hat", "error_km",
-                      "t0_error", "noise_sd", "max_resid"];
+  const QUAKE_KEYS = ["true_x", "true_y", "est_x", "est_y", "miss_km", "mse",
+                      "max_resid"];
   const details = new Map();
   const detailKey = id => "where_start.detail." + id;
   const round3 = v => Math.round(v * 1000) / 1000;
@@ -542,7 +546,7 @@ def estimate(stations, arrivals):
 
   // ------------------------------------------------- the selected run
   // selects run r (or none): highlights its row, shows its code and its
-  // post-mortem, opening on its first miss
+  // post-mortem, opening on its worst miss
   function select(r, scroll = true) {
     selectedId = r ? r.id : null;
     store.set("selected", selectedId);
@@ -665,7 +669,7 @@ def estimate(stations, arrivals):
   let pmQuake = null;   // the quake plotted
   let pmShown = null;   // {res, idx} of the plot, redrawn when a toggle flips
 
-  const setupOf = r => ({ n_station: r.n_station,
+  const setupOf = r => ({ n: r.n, spacing: r.spacing, noise_sd: r.noise_sd,
                           n_quake: r.n_quake, seed: r.seed });
 
   // the quakes table for run r: rebuilt only when the run, sort or filter
@@ -673,16 +677,16 @@ def estimate(stations, arrivals):
   function renderQuakes(r, d) {
     const missOnly = $("miss-only").checked;
     const key = `${r.id}|${pmSort.col}|${pmSort.dir}|${missOnly}`;
-    const nMiss = d.error_km.filter(e => e > HIT_KM).length;
-    pmMsg(`${nMiss} of ${r.n_quake} quakes missed by more than ${HIT_KM} km. ` +
+    const nBad = d.miss_km.filter(e => e > BAD_KM).length;
+    pmMsg(`${nBad} of ${r.n_quake} quakes off by more than ${BAD_KM} km. ` +
           "Click one to see it.");
     $("csv-btn").hidden = false;
     if (key === pmFor) return;
     pmFor = key;
     const quakes = [];
     for (let i = 0; i < r.n_quake; i++) {
-      if (missOnly && d.error_km[i] <= HIT_KM) continue;
-      const q = { idx: i, hit: d.error_km[i] <= HIT_KM };
+      if (missOnly && d.miss_km[i] <= BAD_KM) continue;
+      const q = { idx: i, bad: d.miss_km[i] > BAD_KM };
       for (const k of QUAKE_KEYS) q[k] = d[k][i];
       quakes.push(q);
     }
@@ -701,29 +705,31 @@ def estimate(stations, arrivals):
   }
 
   // the selected run's results as a tidy CSV, a row per quake: the run's
-  // name, estimator and seed repeated on every row, so runs concatenate
+  // name, estimator, seed and settings repeated on every row, so runs
+  // concatenate
   function downloadResults() {
     const r = selected(), d = r && getDetail(r.id);
     if (!d) return;
     const quote = v => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-    const cols = ["run", "estimator", "seed", "quake", ...QUAKE_KEYS, "hit"];
+    const cols = ["run", "estimator", "seed", "n", "spacing", "noise_sd",
+                  "quake", ...QUAKE_KEYS];
     const lines = [cols.join(",")];
     for (let i = 0; i < r.n_quake; i++) {
-      lines.push([quote(r.name), quote(r.estimator), r.seed, i,
-                  ...QUAKE_KEYS.map(k => round3(d[k][i])),
-                  d.error_km[i] <= HIT_KM ? 1 : 0].join(","));
+      lines.push([quote(r.name), quote(r.estimator), r.seed, r.n, r.spacing,
+                  r.noise_sd, i, ...QUAKE_KEYS.map(k => round3(d[k][i]))]
+                 .join(","));
     }
     const slug = s => s.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([lines.join("\n") + "\n"],
                                           { type: "text/csv" }));
-    a.download = `where_start_${slug(r.name) || "run"}_seed${r.seed}.csv`;
+    a.download = `earthquake_${slug(r.name) || "run"}_seed${r.seed}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   // what the post-mortem should show once the worker is free: the selected
-  // run, and a quake of it (null: its first miss). Older asks are dropped.
+  // run, and a quake of it (null: its worst miss). Older asks are dropped.
   let wanted = null, pumping = false;
   function showQuake(idx) {
     const r = selected();
@@ -772,8 +778,7 @@ def estimate(stations, arrivals):
     }
     if (selected() !== r) return;
     if (idx === null) {
-      const m = d.error_km.findIndex(e => e > HIT_KM);
-      idx = m >= 0 ? m : 0;
+      idx = d.miss_km.reduce((best, e, i) => e > d.miss_km[best] ? i : best, 0);
     }
     renderQuakes(r, d);
     pmQuake = idx;
@@ -1074,7 +1079,7 @@ def estimate(stations, arrivals):
     loadCode();
   };
 
-  for (const id of ["n-quake", "seed"]) $(id).addEventListener("change", saveForm);
+  for (const id of Object.values(FORM)) $(id).addEventListener("change", saveForm);
   $("run-btn").onclick = runClicked;
   $("stop-btn").onclick = stop;
   $("base-btn").onclick = baselinesClicked;

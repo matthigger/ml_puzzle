@@ -2,10 +2,14 @@
 // reads (shared/board.js).
 const PUZZLE = {
   project: "where_start",
-  // the bar an entry must clear to be ranked
-  bar: "90%",
+  // every entry is ranked (by mean MSE), so the bar never shows
+  bar: "MSE",
   // the board's score columns, from a re-run's metrics: the seed replays
-  // it on the Practice tab (older re-runs have none)
-  scores: m => [(100 * m.hit_rate).toFixed(1) + "%", m.mean_km.toFixed(2),
-                m.median_km.toFixed(2), m.p90_km.toFixed(2), m.seed ?? ""],
+  // it on the Practice tab. A column an entry's metrics lack shows blank,
+  // so entries scored by an earlier version of the puzzle still show
+  scores: m => {
+    const f = (v, k) => typeof v === "number" ? v.toFixed(k) : "";
+    return [f(m.mean_mse, 2), f(m.median_km, 2), f(m.p90_km, 2),
+            m.n_bad ?? "", m.seed ?? ""];
+  },
 };

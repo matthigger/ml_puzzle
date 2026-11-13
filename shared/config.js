@@ -9,7 +9,7 @@ const CONFIG = {
   // id: the puzzle's folder, and its project in the database
   puzzles: [
     { id: "slice_crawl", title: "Slice Crawl" },
-    { id: "where_start", title: "Where Did It Start?" },
+    { id: "where_start", title: "Earthquake" },
     { id: "ghost_circuit", title: "Ghost on the Circuit" },
   ],
 };

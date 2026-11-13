@@ -2,12 +2,12 @@
 
 Talks to verify.py over stdin / stdout, one JSON object per line. The quakes
 (and their hidden truth) live in verify.py; this side only ever sees each
-quake's stations and arrival times, so there is nothing here to peek at.
+quake's stations, delays and wave speed, so there is nothing here to peek at.
 
     in:  {main, helpers, estimator}    load the student's code
     out: {ok, error}
-    in:  {stations, arrivals}          run the estimator on one quake
-    out: {est: [x, y, t0]} or {error}
+    in:  {x, t, speed}                 run the estimator on one quake
+    out: {est: [x, y]} or {error}
 """
 import json
 import os
@@ -50,14 +50,16 @@ class Quake:
     """One quake as the student sees it: no hidden attributes.
 
     Attributes:
-        stations (np.array): (n_station, 2) station positions, km
-        arrivals (np.array): (n_station,) recorded arrival times, s
+        x (np.array): (n, 2) station positions, km
+        t (np.array): (n,) delay since the quake started at each station, s
+        speed (float): wave speed, km/s
     """
 
-    def __init__(self, stations, arrivals):
-        self.stations = np.array(stations, dtype=float)
-        self.arrivals = np.array(arrivals, dtype=float)
-        self.n_station = len(self.arrivals)
+    def __init__(self, x, t, speed):
+        self.x = np.array(x, dtype=float)
+        self.t = np.array(t, dtype=float)
+        self.speed = float(speed)
+        self.n = len(self.t)
 
 
 def main():
@@ -75,7 +77,7 @@ def main():
     idx = 0
     while True:
         msg = recv()
-        quake = Quake(msg['stations'], msg['arrivals'])
+        quake = Quake(msg['x'], msg['t'], msg['speed'])
         try:
             send({'est': list(runner.call(estimate, quake, idx))})
         except RuntimeError as exc:

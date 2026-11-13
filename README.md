@@ -8,7 +8,7 @@ leaderboard that we re-run ourselves.
 | tab | folder | students write |
 |-----|--------|----------------|
 | Slice Crawl | [`slice_crawl/`](slice_crawl/README.md) | `estimate(crawl)`: the best shop, tasting few slices |
-| Where Did It Start? | [`where_start/`](where_start/README.md) | `estimate(stations, arrivals)`: the epicenter |
+| Earthquake | [`where_start/`](where_start/README.md) | `estimate(x, t, speed)`: the epicenter |
 | Ghost on the Circuit | [`ghost_circuit/`](ghost_circuit/README.md) | `estimate(x, y)`: the devices on the circuit |
 
 Each puzzle page has the same parts: the code (typed, or dropped `.py` /

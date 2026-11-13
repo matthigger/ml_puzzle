@@ -1,17 +1,17 @@
-"""Re-run Where Did It Start leaderboard entries, so every score is ours.
+"""Re-run Earthquake leaderboard entries, so every score is ours.
 
 The page posts code, never a score. This script takes each where_start
 entry still waiting, runs its estimator on N_QUAKE quakes of the official
 setup with a seed drawn here, and writes back the score the board displays,
-seed included: the Practice tab (or where_start.evaluate) with that seed
-and N_QUAKE quakes replays the re-run exactly. The database is shared by
+seed included: the Practice tab with that seed, N_QUAKE quakes and the
+default settings replays the re-run exactly. The database is shared by
 every puzzle (see ../supabase/schema.sql); a puzzle's re-run script handles
 its own PROJECT and scores it its own way (score()).
 
 The student's code runs in a sandbox (../../shared/sandbox.py: no network,
 no secrets, a read-only system, limited memory and processes) under a time
 limit, through child.py. The quakes stay out here: the sandbox gets each
-quake's stations and arrival times, never its epicenter or origin time.
+quake's stations, delays and wave speed, never its epicenter.
 
     python3 verify/verify.py                      re-run every waiting entry
     python3 verify/verify.py --local my_code.py   try one file, no database
@@ -39,7 +39,8 @@ sys.path.insert(0, str(HERE.parent / 'py'))
 sys.path.insert(0, str(HERE.parent.parent / 'shared'))
 
 import sandbox
-from where_start import HIT_BAR, HIT_KM, OFFICIAL, sample
+from runner import BAD_KM, OFFICIAL, sample, summarize
+from runner import score as score_quake
 
 PROJECT = 'where_start'
 N_QUAKE = 2000
@@ -63,7 +64,7 @@ MAX_LINE = 1 << 16
 # the sandbox's /verify: the child, and the puzzle code it imports
 FILES = {'child.py': HERE / 'child.py',
          'runner.py': HERE.parent / 'py' / 'runner.py',
-         'where_start.py': HERE.parent / 'py' / 'where_start.py'}
+         'earthquake.py': HERE.parent / 'py' / 'earthquake.py'}
 
 
 class Failed(Exception):
@@ -87,8 +88,8 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         seed (int | None): None draws a secret one (see SEED_BITS)
 
     Returns:
-        result (dict): {hit_rate, mean_km, median_km, p90_km,
-            mean_abs_t0_error, n_quake, seed, seconds}
+        result (dict): runner.summarize()'s {mean_mse, mse_se, median_km,
+            p90_km, n_bad}, plus n_quake, seed, seconds
 
     Raises:
         Failed: the code didn't load, raised, returned junk or timed out
@@ -124,7 +125,7 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         err = msg.get('error')
         return err if isinstance(err, str) and err.strip() else default
 
-    err_km, err_t0 = [], []
+    mse, miss = [], []
     try:
         send(dict(main=main, helpers=helpers, estimator=estimator))
         msg = recv()
@@ -132,19 +133,20 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
             raise Failed(error(msg, 'the code did not load'))
         for idx in range(n_quake):
             q = sample(seed, idx, **OFFICIAL)
-            send({'stations': q.stations.tolist(),
-                  'arrivals': q.arrivals.tolist()})
+            send({'x': q.x.tolist(), 't': q.t.tolist(),
+                  'speed': q.speed})
             msg = recv()
             if 'est' not in msg:
                 raise Failed(error(msg, f'quake {idx}: no estimate'))
             est = msg['est']
-            if (not isinstance(est, list) or len(est) != 3
+            if (not isinstance(est, list) or len(est) != 2
                     or not all(type(v) in (int, float) and math.isfinite(v)
                                for v in est)):
                 raise Failed(f'quake {idx}: estimate {est!r:.80} is not '
-                             'three numbers')
-            err_km.append(math.dist(est[:2], q._p))
-            err_t0.append(abs(est[2] - q._t0))
+                             'two numbers')
+            m, d = score_quake(est, q)
+            mse.append(m)
+            miss.append(d)
     except Failed:
         raise
     except Exception as exc:
@@ -157,11 +159,7 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
         proc.kill()
         proc.wait()
 
-    err = np.array(err_km)
-    return dict(hit_rate=float(np.mean(err <= HIT_KM)),
-                mean_km=float(err.mean()), median_km=float(np.median(err)),
-                p90_km=float(np.percentile(err, 90)),
-                mean_abs_t0_error=float(np.mean(err_t0)),
+    return dict(**summarize(np.array(mse), np.array(miss)),
                 n_quake=n_quake, seed=seed,
                 seconds=time.monotonic() - start)
 
@@ -169,13 +167,12 @@ def rerun(main, helpers, estimator, n_quake=N_QUAKE, seed=None,
 def score(res):
     """Return the board's view of a re-run: (metrics, qualifies, rank).
 
-    Qualifies: within HIT_KM in at least HIT_BAR of quakes; rank (lower is
-    better among those) is the mean error, km.
+    Every entry qualifies; rank (lower is better) is the mean of
+    Earthquake.evaluate over the quakes, km^2.
     """
-    metrics = {k: res[k] for k in ('hit_rate', 'mean_km', 'median_km',
-                                   'p90_km', 'mean_abs_t0_error',
-                                   'n_quake', 'seed')}
-    return metrics, res['hit_rate'] >= HIT_BAR, res['mean_km']
+    metrics = {k: res[k] for k in ('mean_mse', 'mse_se', 'median_km',
+                                   'p90_km', 'n_bad', 'n_quake', 'seed')}
+    return metrics, True, res['mean_mse']
 
 
 def rpc(fn, body):
@@ -233,8 +230,8 @@ def rerun_entry(e):
         metrics, qualifies, rank = score(res)
         body = dict(status='done', error=None, metrics=metrics,
                     qualifies=qualifies, rank=rank, seed=res['seed'])
-        note = (f'{res["hit_rate"]:.1%} hits, {res["mean_km"]:.2f} km'
-                f' ({res["seconds"]:.0f} s)')
+        note = (f'MSE {res["mean_mse"]:.2f} km^2, {res["n_bad"]} off by '
+                f'{BAD_KM:g}+ km ({res["seconds"]:.0f} s)')
     except Exception as exc:
         msg = (str(exc) if isinstance(exc, Failed)
                else f'the re-run broke down ({type(exc).__name__})')
@@ -274,10 +271,10 @@ def main():
     except Failed as exc:
         print('failed:', exc)
         sys.exit(1)
-    print(f'{res["n_quake"]} quakes: within {HIT_KM:g} km '
-          f'{res["hit_rate"]:.1%} of the time, {res["mean_km"]:.2f} km off '
-          f'on average (median {res["median_km"]:.2f}, 90th pct '
-          f'{res["p90_km"]:.2f}), {res["seconds"]:.0f} s')
+    print(f'{res["n_quake"]} quakes: mean MSE {res["mean_mse"]:.2f} km^2 '
+          f'(median miss {res["median_km"]:.2f} km, 90th pct '
+          f'{res["p90_km"]:.2f}, {res["n_bad"]} off by {BAD_KM:g}+ km), '
+          f'{res["seconds"]:.0f} s')
 
 
 if __name__ == '__main__':

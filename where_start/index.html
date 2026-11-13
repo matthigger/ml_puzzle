@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Where Did It Start</title>
-  <meta name="description" content="Practice site for the Where Did It
-    Start puzzle: run your estimate() on as many random earthquakes as you
-    like, see how close it gets to each epicenter.">
+  <title>Earthquake</title>
+  <meta name="description" content="Practice site for the Earthquake
+    puzzle: run your estimate() on as many random earthquakes as you like,
+    see how close it gets to each epicenter.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23b45309' stroke-width='2' stroke-opacity='.45'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%23b45309' stroke-width='2' stroke-opacity='.7'/%3E%3Cpath d='M16 10 L17.8 14.2 L22 14.4 L18.7 17.2 L19.8 21.5 L16 19.1 L12.2 21.5 L13.3 17.2 L10 14.4 L14.2 14.2 Z' fill='%23dc2626'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="../shared/style.css">
   <link rel="stylesheet" href="puzzle.css">
@@ -15,7 +15,7 @@
   <script src="../shared/config.js"></script>
   <script src="../shared/nav.js"></script>
   <header>
-    <h1>Where Did It Start?</h1>
+    <h1>Earthquake</h1>
     <p class="sub">Practice site for the puzzle: try your
       <code>estimate()</code> on as many random earthquakes as you like.</p>
     <nav class="tabs" role="tablist">
@@ -26,15 +26,18 @@
 
   <section class="intro card">
     <div>
-      <p class="goal"><b>Goal:</b> land within 5 km of the epicenter in at
-        least 90% of quakes, and as close as you can on average.</p>
-      <p>Each quake: 12 stations scattered over a 200 km by 200 km region
-        record when the shock wave (6 km/s) reaches them, a little noisily.
-        <code>estimate(stations, arrivals)</code> gets
-        the <code>(12, 2)</code> station positions (km) and the
-        <code>(12,)</code> arrival times (s), and returns
-        <code>(x, y, t0)</code>. Everything runs here in your browser, and
-        nothing leaves it unless you add a run to the leaderboard.</p>
+      <p class="goal"><b>Goal:</b> the smallest mean squared error,
+        <code>quake.evaluate(y_hat)</code> (km²), averaged over many quakes
+        with the notebook's default settings.</p>
+      <p>Each quake is the notebook's <code>Earthquake</code>: 10 stations
+        about 50 km apart record how many seconds after the quake started
+        they felt the shaking (wave speed 6 km/s, timing noise 0.2 s).
+        <code>estimate(x, t, speed)</code> gets the <code>(10, 2)</code>
+        station positions <code>quake.x</code> (km), the <code>(10,)</code>
+        delays <code>quake.t</code> (s) and <code>quake.speed</code> (km/s),
+        and returns the epicenter <code>(x, y)</code>. Everything runs here
+        in your browser, and nothing leaves it unless you add a run to the
+        leaderboard.</p>
     </div>
     <details class="howto" data-show="practice">
       <summary>How your code is run</summary>
@@ -43,12 +46,13 @@
           files</b> to drop the <code>.py</code> / <code>.ipynb</code> files
           you work on elsewhere (or a <code>.zip</code>): the main file (the
           one defining <code>estimate</code>) can import the others. A
-          notebook's code cells run top to bottom; lines starting with
-          <code>!</code> or <code>%</code> are skipped, and its own
-          <code>evaluate()</code> calls run only 20 quakes, so loading stays
-          quick.</li>
-        <li>Every function that takes <code>(stations, arrivals)</code>
-          shows up in the
+          notebook's code cells run top to bottom (lines starting with
+          <code>!</code> or <code>%</code> are skipped), so long experiments
+          in it slow every load: <b>Stop</b> ends one.
+          <code>from earthquake import Earthquake</code> works with or
+          without the file.</li>
+        <li>Every function that takes <code>(x, t, speed)</code> (or just
+          <code>(x, t)</code>) shows up in the
           <b>Estimator</b> menu, so you can compare a few in one go. Name a
           run to tell versions apart: each row keeps the code it ran.</li>
         <li>Anything callable works, even a method of an object:
@@ -56,7 +60,7 @@
     def __init__(self, n_start=4):           # runs once, when your code loads
         self.n_start = n_start
 
-    def estimate(self, stations, arrivals):  # runs once per quake
+    def estimate(self, x, t, speed):         # runs once per quake
         ...
 
 estimate = Locator(n_start=8).estimate</pre></li>
@@ -125,9 +129,22 @@ estimate = Locator(n_start=8).estimate</pre></li>
             value="200"></label>
         <label class="field"><span>Seed</span>
           <input id="seed" type="number" min="0" value="0"></label>
-        <p class="hint">Each quake draws new stations, epicenter, start
-          time and timing noise. The same seed gives the
-          same quakes, whatever the estimator.</p>
+        <details class="settings">
+          <summary>Settings (the notebook's Earthquake arguments)</summary>
+          <label class="field"><span>Stations <code>n</code></span>
+            <input id="n-station" type="number" min="1" max="200"
+              value="10"></label>
+          <label class="field"><span>Spacing (km)</span>
+            <input id="spacing" type="number" min="0.1" step="any"
+              value="50"></label>
+          <label class="field"><span>Noise sd (s)</span>
+            <input id="noise-sd" type="number" min="0" step="any"
+              value="0.2"></label>
+        </details>
+        <p class="hint">Each quake draws new stations, epicenter and timing
+          noise; quake <i>i</i> of seed <i>s</i> is
+          <code>Earthquake(seed=[s, i], ...)</code> in the notebook. The
+          leaderboard uses the default settings.</p>
         <div class="buttons run-row">
           <button id="run-btn" class="primary" disabled>Run</button>
           <button id="stop-btn" disabled>Stop</button>
@@ -153,10 +170,10 @@ estimate = Locator(n_start=8).estimate</pre></li>
       </div>
       <p class="hint">Saved in this browser only. Click a row for its
         post-mortem and code, a name to rename it, a heading to sort.
-        &ldquo;Within 5 km&rdquo; is &plusmn; 2 standard deviations;
-        <b>maybe</b> means that range includes 90%, so run more quakes to
-        tell. &ldquo;Add baselines&rdquo; runs the simplest estimators on
-        the same quakes.</p>
+        MSE is the mean of <code>quake.evaluate</code> &plusmn; 2 standard
+        errors; &ldquo;10+ km&rdquo; counts the quakes it missed by more
+        than 10 km. &ldquo;Add baselines&rdquo; runs the simplest estimators
+        on the same quakes.</p>
     </section>
 
     <section class="card wide" data-show="practice" id="pm-card">
@@ -179,7 +196,7 @@ estimate = Locator(n_start=8).estimate</pre></li>
           quakes one by one, with the hidden truth revealed.</p>
         <div class="buttons pm-tools">
           <label class="check" id="miss-only-box" hidden><input
-            type="checkbox" id="miss-only"> misses only</label>
+            type="checkbox" id="miss-only"> 10+ km only</label>
           <button id="csv-btn" hidden title="One row per quake: the truth,
             your estimate, the errors (CSV)">Download results</button>
         </div>
@@ -193,8 +210,8 @@ estimate = Locator(n_start=8).estimate</pre></li>
       <div class="pm-bar" id="circles-box" hidden>
         <span></span>
         <label class="check" title="Each station's distance from the quake,
-          as its recording and the true start time say"><input
-          type="checkbox" id="circles"> arrival circles</label>
+          as its recorded delay says: radius speed times delay"><input
+          type="checkbox" id="circles"> delay circles</label>
       </div>
       <div id="pm-plot"></div>
     </section>
@@ -216,16 +233,17 @@ estimate = Locator(n_start=8).estimate</pre></li>
       </form>
       <p id="board-title" class="board-title" hidden></p>
       <p class="hint">Every score here is our own re-run: 2000 fresh
-        quakes of the official setup, on a new seed, shown once it's scored.
-        Run 2000 quakes with that seed on the Practice tab to replay it. To
+        quakes with the default settings, on a new seed, shown once it's
+        scored, ranked by mean MSE (km²), lowest first. Run 2000 quakes with
+        that seed on the Practice tab to replay it. To
         add yours, use <b>Add to leaderboard</b> on a row of the Practice
         tab's runs.</p>
       <div class="table-wrap" id="board-wrap" hidden>
         <table id="board" class="runs">
           <thead><tr>
             <th class="num">#</th><th>Name</th><th>Method</th>
-            <th class="num">Within 5 km</th><th class="num">Avg km</th>
-            <th class="num">Median</th><th class="num">90th pct</th>
+            <th class="num">MSE (km²)</th><th class="num">Median km</th>
+            <th class="num">90th pct km</th><th class="num">10+ km</th>
             <th class="num">Seed</th><th>Updated</th>
           </tr></thead>
           <tbody></tbody>
